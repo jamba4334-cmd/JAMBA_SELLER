@@ -24,7 +24,7 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 GLOBAL VARIABLES
+// 🚀 GLOBAL VARIABLES: Safe from React page reloads
 let currentEditImageUrls = [];
 let selectedFiles = [];
 let editingProductId = null; 
@@ -51,9 +51,7 @@ export default function SellerDashboard() {
     const [wallet, setWallet] = useState({ available: 0, pending: 0, withdrawn: 0 });
     const [payoutHistory, setPayoutHistory] = useState([]);
     const [sellerProfile, setSellerProfile] = useState({}); 
-    const [isProfileEditing, setIsProfileEditing] = useState(true);
-
-    // 🚀 THE FIX: Tab State is now controlled by React to stop the "Blink"
+    const [isProfileEditing, setIsProfileEditing] = useState(false); 
     const [activeTab, setActiveTab] = useState("orders");
 
     const [selectedState, setSelectedState] = useState("");
@@ -62,23 +60,21 @@ export default function SellerDashboard() {
     const [selectedPickupDistrict, setSelectedPickupDistrict] = useState("");
     const [sameAsPermanent, setSameAsPermanent] = useState(false);
 
+    // 🚀 THE FIX: Background systems only load ONCE to prevent infinite loops and crashes
     useEffect(() => {
-        
-        // 🚀 THE FIX: Navigation is now entirely safe and connected to React
         window.showSection = function(sectionId) {
             setActiveTab(sectionId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
-        function showToast(message) {
+        window.showToast = function(message) {
             const toast = document.getElementById('toast-notification');
             if(toast) {
                 toast.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${message}`;
                 toast.classList.add('show');
                 setTimeout(() => { toast.classList.remove('show'); }, 3000);
             }
-        }
-        window.showToast = showToast;
+        };
 
         window.updateCategoryOptions = function(gender, selectedCategory = "") {
             const categorySelect = document.getElementById('p-category');
@@ -101,71 +97,6 @@ export default function SellerDashboard() {
                 });
             }
         };
-
-        let hasBootstrapped = false;
-
-        onAuthStateChanged(auth, async (user) => {
-            const overlay = document.getElementById('login-overlay');
-            const errorMsg = document.getElementById('login-error');
-            
-            if (user) {
-                activeUserEmail = user.email; 
-                setSellerEmail(user.email);
-                
-                try {
-                    const docRef = doc(db, "authorized_sellers", activeUserEmail);
-                    const docSnap = await getDoc(docRef);
-                    
-                    if (!docSnap.exists()) {
-                        await signOut(auth);
-                        if (errorMsg) {
-                            errorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Unauthorized: Email not registered. Please contact JAMBAWEAR Admin.`;
-                            errorMsg.style.display = 'block';
-                            errorMsg.style.color = '#dc2626';
-                            errorMsg.style.background = '#fee2e2';
-                            errorMsg.style.padding = '10px';
-                            errorMsg.style.borderRadius = '6px';
-                            errorMsg.style.fontSize = '13px';
-                        }
-                        return; 
-                    }
-
-                    if (errorMsg) errorMsg.style.display = 'none';
-                    if (overlay) overlay.style.display = 'none';
-                    
-                    if (!hasBootstrapped) {
-                        hasBootstrapped = true;
-                        await bootstrapData(activeUserEmail); 
-                    }
-                } catch (err) {
-                    console.error("Verification failed", err);
-                }
-            } else {
-                if (overlay) overlay.style.display = 'flex';
-            }
-        });
-
-        window.handleSellerLogin = async () => {
-            const errorMsg = document.getElementById('login-error');
-            try {
-                await signInWithPopup(auth, provider);
-            } catch (error) {
-                console.error("Login Error:", error);
-                errorMsg.innerText = "Login failed: " + error.message;
-                errorMsg.style.display = 'block';
-            }
-        };
-
-        window.handleLogout = async () => {
-            await signOut(auth);
-            window.location.reload(); 
-        };
-        
-        async function bootstrapData(email) {
-            await loadSellerProfileAndWallet(email); 
-            await loadSellerInventory(email); 
-            await loadSellerOrders(email); 
-        }
 
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
@@ -228,100 +159,6 @@ export default function SellerDashboard() {
             window.renderImagePreview();
         };
 
-        window.handleProductSubmit = async function(e) {
-            e.preventDefault();
-            const submitBtn = document.getElementById('submit-btn');
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting to Admin...';
-
-            if(!sellerProfile.brandName || !sellerProfile.sellerName || !sellerProfile.state || !sellerProfile.pickupState) {
-                alert("Please complete your Store Profile (Brand, Permanent & Pickup Location) before submitting a product!");
-                window.showSection('profile');
-                submitBtn.disabled = false;
-                submitBtn.innerText = editingProductId ? "Update & Request Approval" : "Submit for Admin Approval";
-                return;
-            }
-
-            try {
-                let finalUrls = [...currentEditImageUrls];
-                
-                if (selectedFiles.length > 0) {
-                    for (const file of selectedFiles) {
-                        const formData = new FormData();
-                        formData.append("file", file);
-                        formData.append("upload_preset", "jambawear_preset");
-                        const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
-                        const data = await res.json();
-                        if (data.secure_url) finalUrls.push(data.secure_url);
-                        else throw new Error(data.error?.message || "Image upload failed.");
-                    }
-                }
-
-                if (finalUrls.length === 0) throw new Error("Please upload at least 1 image.");
-
-                const productData = {
-                    title: document.getElementById('p-name').value || "",
-                    original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
-                    selling_price: parseFloat(document.getElementById('p-price').value) || 0,
-                    stock: parseInt(document.getElementById('p-stock').value) || 0, 
-                    category: (document.getElementById('p-category').value || "") + " - " + (document.getElementById('p-gender').value || ""),
-                    images: finalUrls,
-                    description: document.getElementById('p-desc').value || "",
-                    color: document.getElementById('p-color').value || "",
-                    fabric: document.getElementById('p-fabric').value || "",
-                    
-                    brandName: sellerProfile.brandName || "",
-                    sellerName: sellerProfile.sellerName || "",
-                    sellerPhone: sellerProfile.primaryPhone || "",
-                    sellerEmail: sellerProfile.storeEmail || activeUserEmail, 
-                    
-                    sellerAddress: sellerProfile.address || "",
-                    city: sellerProfile.town || "",
-                    district: sellerProfile.district || "",
-                    state: selectedState || "",
-                    pincode: sellerProfile.pincode || "",
-
-                    pickupAddress: sellerProfile.pickupAddress || "",
-                    pickupTown: sellerProfile.pickupTown || "",
-                    pickupDistrict: selectedPickupDistrict || "",
-                    pickupState: selectedPickupState || "",
-                    pickupPincode: sellerProfile.pickupPincode || "",
-                    
-                    allow_cod: document.getElementById('p-pay-cod').checked,
-                    allow_online: document.getElementById('p-pay-online').checked,
-                    
-                    approval_status: "pending", 
-                    isHidden: true,
-                    updated_at: new Date().toISOString()
-                };
-
-                if (editingProductId) {
-                    await updateDoc(doc(db, "products", editingProductId), productData);
-                    window.showToast("Product Updated & Sent for Approval!");
-                } else {
-                    productData.item_id = "JW" + Date.now().toString().slice(-6);
-                    productData.created_at = new Date().toISOString();
-                    await addDoc(collection(db, "products"), productData);
-                    window.showToast("Product Submitted for Admin Approval!");
-                }
-
-                document.getElementById('new-product-form').reset();
-                document.getElementById('cancel-edit-btn').style.display = "none";
-                editingProductId = null;
-                currentEditImageUrls = [];
-                selectedFiles = [];
-                window.renderImagePreview();
-                
-                window.showSection('live-products');
-                loadSellerInventory(activeUserEmail);
-            } catch (err) { 
-                alert("Error submitting product: " + err.message); 
-            } finally { 
-                submitBtn.disabled = false; 
-                submitBtn.innerText = "Submit for Admin Approval"; 
-            }
-        };
-
         window.editProduct = function(productId) {
             const product = globalSellerProducts.find(p => p.id === productId);
             if (!product) {
@@ -375,331 +212,469 @@ export default function SellerDashboard() {
             window.showSection('live-products');
         };
 
-        async function loadSellerInventory(email) {
-            try {
-                const q = query(collection(db, "products"), where("sellerEmail", "==", email));
-                const querySnapshot = await getDocs(q);
-                
-                globalSellerProducts = []; 
-                querySnapshot.forEach((doc) => {
-                    globalSellerProducts.push({ id: doc.id, ...doc.data() });
-                });
-                
-                renderInventoryList(globalSellerProducts);
-            } catch (err) {
-                console.error("Inventory Load Error:", err);
-            }
-        }
-
-        function renderInventoryList(productsToRender) {
-            const inventoryList = document.getElementById('seller-inventory-list');
-            if(!inventoryList) return;
-            inventoryList.innerHTML = ''; 
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            const overlay = document.getElementById('login-overlay');
+            const errorMsg = document.getElementById('login-error');
             
-            if(productsToRender.length === 0) {
-                inventoryList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">You haven\'t submitted any products yet.</p>';
-                return;
-            }
-
-            productsToRender.forEach((product) => {
-                let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
-
-                let statusBadge = '';
-                if (product.approval_status === 'pending') {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Admin Approval</span>';
-                } else if (product.approval_status === 'rejected') {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-xmark"></i> Rejected</span>';
-                } else {
-                    statusBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check-double"></i> Live on Store</span>';
-                }
-
-                inventoryList.innerHTML += `
-                <div class="card" style="display: flex; gap: 24px; padding: 24px; border: ${product.approval_status === 'pending' ? '2px solid var(--accent)' : '1px solid #e5e7eb'}">
-                    <div style="flex: 1;">
-                        <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 8px;">${product.title}</div>
-                        <div style="font-size: 14px; color: var(--text-main); margin-bottom: 12px;">
-                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${product.category || 'N/A'} &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; Stock: <strong>${product.stock || 0}</strong>
-                        </div>
-                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                            ${statusBadge}
-                            <button class="action-btn btn-edit" style="padding: 6px 12px; font-size: 12px;" onclick="window.editProduct('${product.id}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
-                        </div>
-                    </div>
-                    <img src="${mainImgUrl}" style="width:90px; height:90px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
-                </div>`;
-            });
-        }
-
-        async function loadSellerOrders(email) {
-            try {
-                const querySnapshot = await getDocs(collection(db, "orders"));
-                let sellerOrders = [];
+            if (user) {
+                activeUserEmail = user.email; 
+                setSellerEmail(user.email);
                 
-                querySnapshot.forEach(document => {
-                    const orderData = document.data();
-                    if(orderData.items) {
-                        const hasMyItems = orderData.items.some(item => item.sellerEmail === email || item.brandName === sellerProfile.brandName);
-                        if(hasMyItems) {
-                            sellerOrders.push({ id: document.id, ...orderData });
-                        }
-                    }
-                });
-
-                sellerOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
-                renderOrdersList(sellerOrders);
-            } catch (error) {
-                console.error("Error loading orders:", error);
-            }
-        }
-
-        window.acceptOrder = async function(orderId) {
-            if(confirm("By accepting, you confirm you have this item in stock and will prepare it for pickup.")) {
                 try {
-                    await updateDoc(doc(db, "orders", orderId), { 
-                        seller_accepted: true,
-                        accepted_at: new Date().toISOString()
-                    });
-                    window.showToast("Order Accepted Successfully!");
-                    loadSellerOrders(activeUserEmail);
-                } catch(e) {
-                    alert("Error accepting order: " + e.message);
-                }
-            }
-        };
-
-        function renderOrdersList(ordersToRender) {
-            const ordersList = document.getElementById('seller-orders-list');
-            if(!ordersList) return;
-            ordersList.innerHTML = ''; 
-            
-            if(ordersToRender.length === 0) {
-                ordersList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No pending orders for your products right now.</p>';
-                return;
-            }
-
-            ordersToRender.forEach(order => {
-                const isAcceptedBySeller = order.seller_accepted === true;
-                const pMethod = order.payment_method || order.paymentMethod;
-                const isCOD = pMethod && pMethod.toUpperCase() === 'COD';
-                
-                let actionAreaHtml = '';
-                
-                if (isCOD && !isAcceptedBySeller) {
-                    actionAreaHtml = `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
-                            <button class="action-btn btn-status-active" style="width: 100%; padding: 12px; font-size: 14px;" onclick="window.acceptOrder('${order.id}')">
-                                <i class="fa-solid fa-handshake"></i> Accept COD Order
-                            </button>
-                        </div>
-                    `;
-                } else if (!order.shipping_label_url && !order.trackingId) {
-                    const waitingText = isCOD 
-                        ? "Order Accepted. Waiting for Admin to generate tracking details..." 
-                        : "Prepaid Order Verified. Waiting for Admin to generate tracking details...";
-
-                    actionAreaHtml = `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb; text-align: center; color: var(--accent); font-weight: 600; font-size: 13px;">
-                            <i class="fa-solid fa-hourglass-half"></i> ${waitingText}
-                        </div>
-                    `;
-                } else if (order.trackingId) {
-                    actionAreaHtml = `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb;">
-                            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                <strong>Courier:</strong> ${order.courierName} | <strong>Tracking:</strong> ${order.trackingId}
-                            </div>
-                        </div>
-                    `;
-                }
-
-                let itemsHtml = order.items.map(i => `
-                    <div style="display: flex; align-items: flex-start; gap: 14px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee;">
-                        <img src="${i.image || 'https://via.placeholder.com/80x100'}" style="width: 50px; height: 60px; object-fit: cover; border-radius: 4px;">
-                        <div style="line-height: 1.4; font-size:13px;">
-                            <strong style="font-size: 13px;">${i.quantity}x</strong> ${i.title} <br>
-                            <span style="color: var(--text-muted);">Size: ${i.size || 'N/A'}</span>
-                        </div>
-                    </div>
-                `).join('');
-
-                ordersList.innerHTML += `
-                    <div class="card" style="padding: 24px; margin-bottom: 20px;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
-                            <div>
-                                <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
-                                <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
-                                    ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
-                                </div>
-                            </div>
-                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
-                        </div>
-                        
-                        <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
-                            <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
-                                <i class="fa-solid fa-box-open" style="color: #3b82f6;"></i> Items to fulfill
-                            </strong>
-                            <div style="max-height: 150px; overflow-y: auto;">
-                                ${itemsHtml}
-                            </div>
-                        </div>
-
-                        ${actionAreaHtml}
-                    </div>`;
-            });
-        }
-
-        async function loadSellerProfileAndWallet(email) {
-            try {
-                const profileRef = doc(db, "seller_profiles", email);
-                const profileSnap = await getDoc(profileRef);
-                
-                if (profileSnap.exists()) {
-                    const data = profileSnap.data();
-                    setSellerProfile(data);
-                    tempProfilePhoto = data.profilePhoto || ""; 
+                    const docRef = doc(db, "authorized_sellers", activeUserEmail);
+                    const docSnap = await getDoc(docRef);
                     
-                    setSameAsPermanent(data.sameAsPermanent || false);
-                    setSelectedState(data.state || "");
-                    setSelectedDistrict(data.district || "");
-                    setSelectedPickupState(data.pickupState || "");
-                    setSelectedPickupDistrict(data.pickupDistrict || "");
-                    setIsProfileEditing(false);
-                } else {
-                    setIsProfileEditing(true);
+                    if (!docSnap.exists()) {
+                        await signOut(auth);
+                        if (errorMsg) {
+                            errorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Unauthorized: Email not registered. Please contact JAMBAWEAR Admin.`;
+                            errorMsg.style.display = 'block';
+                        }
+                        return; 
+                    }
+
+                    if (errorMsg) errorMsg.style.display = 'none';
+                    if (overlay) overlay.style.display = 'none';
+                    
+                    // Fetch Profile
+                    const profileRef = doc(db, "seller_profiles", activeUserEmail);
+                    const profileSnap = await getDoc(profileRef);
+                    
+                    if (profileSnap.exists()) {
+                        const data = profileSnap.data();
+                        setSellerProfile(data);
+                        tempProfilePhoto = data.profilePhoto || ""; 
+                        setSameAsPermanent(data.sameAsPermanent || false);
+                        setSelectedState(data.state || "");
+                        setSelectedDistrict(data.district || "");
+                        setSelectedPickupState(data.pickupState || "");
+                        setSelectedPickupDistrict(data.pickupDistrict || "");
+                        setIsProfileEditing(false); // Valid profile exists, show beautiful UI
+                    } else {
+                        setIsProfileEditing(true); // New seller, force them to edit profile
+                    }
+
+                    // Boot other data
+                    setWallet({ available: 0, pending: 0, withdrawn: 0 });
+                    setPayoutHistory([]);
+                    await loadSellerInventory(activeUserEmail); 
+                    await loadSellerOrders(activeUserEmail); 
+
+                } catch (err) {
+                    console.error("Verification failed", err);
                 }
-
-                setWallet({ available: 0, pending: 0, withdrawn: 0 });
-                setPayoutHistory([]);
-
-            } catch (err) {
-                console.log("Could not fetch profile yet, keeping edit mode open.");
-                setIsProfileEditing(true);
+            } else {
+                if (overlay) overlay.style.display = 'flex';
             }
+        });
+
+        return () => unsubscribe();
+    }, []); // Empty array guarantees this hook only runs ONCE!
+
+    window.handleSellerLogin = async () => {
+        const errorMsg = document.getElementById('login-error');
+        try {
+            await signInWithPopup(auth, provider);
+        } catch (error) {
+            console.error("Login Error:", error);
+            errorMsg.innerText = "Login failed: " + error.message;
+            errorMsg.style.display = 'block';
+        }
+    };
+
+    window.handleLogout = async () => {
+        await signOut(auth);
+        window.location.reload(); 
+    };
+
+    const handleProductSubmit = async function(e) {
+        e.preventDefault();
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting to Admin...';
+
+        if(!sellerProfile.brandName || !sellerProfile.sellerName || !selectedState) {
+            alert("Please complete your Store Profile (Brand, Permanent & Pickup Location) before submitting a product!");
+            window.showSection('profile');
+            submitBtn.disabled = false;
+            submitBtn.innerText = editingProductId ? "Update & Request Approval" : "Submit for Admin Approval";
+            return;
         }
 
-        window.handleProfilePhotoUpload = async function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+        try {
+            let finalUrls = [...currentEditImageUrls];
             
-            const btnText = document.getElementById('profile-photo-btn-text');
-            if(btnText) btnText.innerText = "Uploading...";
-            
-            try {
-                const formData = new FormData();
-                formData.append("file", file);
-                formData.append("upload_preset", "jambawear_preset");
-                
-                const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
-                const data = await res.json();
-                
-                if (data.secure_url) {
-                    tempProfilePhoto = data.secure_url;
-                    setSellerProfile(prev => ({...prev, profilePhoto: data.secure_url}));
-                    window.showToast("Photo uploaded! Click Save to confirm.");
-                } else {
-                    throw new Error("Upload failed");
+            if (selectedFiles.length > 0) {
+                for (const file of selectedFiles) {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("upload_preset", "jambawear_preset");
+                    const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
+                    const data = await res.json();
+                    if (data.secure_url) finalUrls.push(data.secure_url);
+                    else throw new Error(data.error?.message || "Image upload failed.");
                 }
-            } catch (err) {
-                alert("Image upload failed: " + err.message);
-            } finally {
-                if(btnText) btnText.innerText = "Change Photo";
-                e.target.value = ""; 
-            }
-        };
-
-        window.handleProfileSave = async function(e) {
-            e.preventDefault();
-
-            const accNum = document.getElementById('bank-acc-num').value;
-            const confirmAccNum = document.getElementById('bank-acc-num-confirm').value;
-            const ifsc = document.getElementById('bank-ifsc').value;
-            const confirmIfsc = document.getElementById('bank-ifsc-confirm').value;
-
-            if (accNum !== confirmAccNum) {
-                alert("Account Numbers do not match. Please verify carefully.");
-                return;
             }
 
-            if (ifsc !== confirmIfsc) {
-                alert("IFSC Codes do not match. Please verify carefully.");
-                return;
-            }
+            if (finalUrls.length === 0) throw new Error("Please upload at least 1 image.");
 
-            const btn = document.getElementById('save-profile-btn');
-            btn.disabled = true;
-            btn.innerText = 'Saving...';
-
-            const profileData = {
-                email: activeUserEmail,
-                profilePhoto: tempProfilePhoto,
-                brandName: document.getElementById('prof-brand-name').value,
-                sellerName: document.getElementById('prof-seller-name').value,
-                storeEmail: document.getElementById('prof-email').value,
-                primaryPhone: document.getElementById('prof-phone-1').value,
-                secondaryPhone: document.getElementById('prof-phone-2').value,
+            const productData = {
+                title: document.getElementById('p-name').value || "",
+                original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
+                selling_price: parseFloat(document.getElementById('p-price').value) || 0,
+                stock: parseInt(document.getElementById('p-stock').value) || 0, 
+                category: (document.getElementById('p-category').value || "") + " - " + (document.getElementById('p-gender').value || ""),
+                images: finalUrls,
+                description: document.getElementById('p-desc').value || "",
+                color: document.getElementById('p-color').value || "",
+                fabric: document.getElementById('p-fabric').value || "",
                 
-                address: document.getElementById('prof-address').value,
-                town: document.getElementById('prof-town').value,
-                state: selectedState,
-                district: selectedDistrict,
-                pincode: document.getElementById('prof-pincode').value,
+                brandName: sellerProfile.brandName || "",
+                sellerName: sellerProfile.sellerName || "",
+                sellerPhone: sellerProfile.primaryPhone || "",
+                sellerEmail: sellerProfile.storeEmail || activeUserEmail, 
                 
-                pickupAddress: sameAsPermanent ? document.getElementById('prof-address').value : document.getElementById('pickup-address').value,
-                pickupTown: sameAsPermanent ? document.getElementById('prof-town').value : document.getElementById('pickup-town').value,
-                pickupState: sameAsPermanent ? selectedState : selectedPickupState,
-                pickupDistrict: sameAsPermanent ? selectedDistrict : selectedPickupDistrict,
-                pickupPincode: sameAsPermanent ? document.getElementById('prof-pincode').value : document.getElementById('pickup-pincode').value,
-                sameAsPermanent: sameAsPermanent,
+                sellerAddress: sellerProfile.address || "",
+                city: sellerProfile.town || "",
+                district: sellerProfile.district || "",
+                state: selectedState || "",
+                pincode: sellerProfile.pincode || "",
 
-                bankName: document.getElementById('bank-name').value,
-                accName: document.getElementById('bank-acc-name').value,
-                accNumber: accNum,
-                ifsc: ifsc,
+                pickupAddress: sellerProfile.pickupAddress || "",
+                pickupTown: sellerProfile.pickupTown || "",
+                pickupDistrict: selectedPickupDistrict || "",
+                pickupState: selectedPickupState || "",
+                pickupPincode: sellerProfile.pickupPincode || "",
+                
+                allow_cod: document.getElementById('p-pay-cod').checked,
+                allow_online: document.getElementById('p-pay-online').checked,
+                
+                approval_status: "pending", 
+                isHidden: true,
                 updated_at: new Date().toISOString()
             };
 
-            try {
-                await setDoc(doc(db, "seller_profiles", activeUserEmail), profileData);
-                setSellerProfile(profileData); 
-                setIsProfileEditing(false); 
-                window.showToast("Store Profile Saved!");
-            } catch (err) {
-                alert("Failed to save profile.");
-            } finally {
-                btn.disabled = false;
-                btn.innerText = 'Save Profile Details';
-            }
-        };
-
-        window.requestPayout = async function() {
-            if(!sellerProfile.accNumber) {
-                alert("Please save your Bank Details in the 'Store Profile' tab before requesting a payout.");
-                window.showSection('profile');
-                return;
+            if (editingProductId) {
+                await updateDoc(doc(db, "products", editingProductId), productData);
+                window.showToast("Product Updated & Sent for Approval!");
+            } else {
+                productData.item_id = "JW" + Date.now().toString().slice(-6);
+                productData.created_at = new Date().toISOString();
+                await addDoc(collection(db, "products"), productData);
+                window.showToast("Product Submitted for Admin Approval!");
             }
 
-            if(wallet.available <= 0) {
-                alert("You have no available balance to withdraw.");
-                return;
+            document.getElementById('new-product-form').reset();
+            document.getElementById('cancel-edit-btn').style.display = "none";
+            editingProductId = null;
+            currentEditImageUrls = [];
+            selectedFiles = [];
+            window.renderImagePreview();
+            
+            window.showSection('live-products');
+            loadSellerInventory(activeUserEmail);
+        } catch (err) { 
+            alert("Error submitting product: " + err.message); 
+        } finally { 
+            submitBtn.disabled = false; 
+            submitBtn.innerText = "Submit for Admin Approval"; 
+        }
+    };
+
+    async function loadSellerInventory(email) {
+        try {
+            const q = query(collection(db, "products"), where("sellerEmail", "==", email));
+            const querySnapshot = await getDocs(q);
+            
+            globalSellerProducts = []; 
+            querySnapshot.forEach((doc) => {
+                globalSellerProducts.push({ id: doc.id, ...doc.data() });
+            });
+            
+            renderInventoryList(globalSellerProducts);
+        } catch (err) {
+            console.error("Inventory Load Error:", err);
+        }
+    }
+
+    function renderInventoryList(productsToRender) {
+        const inventoryList = document.getElementById('seller-inventory-list');
+        if(!inventoryList) return;
+        inventoryList.innerHTML = ''; 
+        
+        if(productsToRender.length === 0) {
+            inventoryList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">You haven\'t submitted any products yet.</p>';
+            return;
+        }
+
+        productsToRender.forEach((product) => {
+            let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
+
+            let statusBadge = '';
+            if (product.approval_status === 'pending') {
+                statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Admin Approval</span>';
+            } else if (product.approval_status === 'rejected') {
+                statusBadge = '<span class="hero-badge" style="background-color: var(--danger);"><i class="fa-solid fa-xmark"></i> Rejected</span>';
+            } else {
+                statusBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check-double"></i> Live on Store</span>';
             }
 
-            if(confirm(`Request withdrawal of ₹${wallet.available}?`)) {
-                try {
-                    await addDoc(collection(db, "payout_requests"), { 
-                        email: activeUserEmail, 
-                        amount: wallet.available,
-                        status: 'pending',
-                        date: new Date().toISOString()
-                    });
-                    window.showToast("Payout Request Submitted to Admin!");
-                } catch(err) {
-                    alert("Failed to request payout.");
+            inventoryList.innerHTML += `
+            <div class="card" style="display: flex; gap: 24px; padding: 24px; border: ${product.approval_status === 'pending' ? '2px solid var(--accent)' : '1px solid #e5e7eb'}">
+                <div style="flex: 1;">
+                    <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 8px;">${product.title}</div>
+                    <div style="font-size: 14px; color: var(--text-main); margin-bottom: 12px;">
+                        <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${product.category || 'N/A'} &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; Stock: <strong>${product.stock || 0}</strong>
+                    </div>
+                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                        ${statusBadge}
+                        <button type="button" class="action-btn btn-edit" style="padding: 6px 12px; font-size: 12px;" onclick="window.editProduct('${product.id}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
+                    </div>
+                </div>
+                <img src="${mainImgUrl}" style="width:90px; height:90px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
+            </div>`;
+        });
+    }
+
+    async function loadSellerOrders(email) {
+        try {
+            const querySnapshot = await getDocs(collection(db, "orders"));
+            let sellerOrders = [];
+            
+            querySnapshot.forEach(document => {
+                const orderData = document.data();
+                if(orderData.items) {
+                    const hasMyItems = orderData.items.some(item => item.sellerEmail === email || item.brandName === sellerProfile.brandName);
+                    if(hasMyItems) {
+                        sellerOrders.push({ id: document.id, ...orderData });
+                    }
                 }
+            });
+
+            sellerOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
+            renderOrdersList(sellerOrders);
+        } catch (error) {
+            console.error("Error loading orders:", error);
+        }
+    }
+
+    window.acceptOrder = async function(orderId) {
+        if(confirm("By accepting, you confirm you have this item in stock and will prepare it for pickup.")) {
+            try {
+                await updateDoc(doc(db, "orders", orderId), { 
+                    seller_accepted: true,
+                    accepted_at: new Date().toISOString()
+                });
+                window.showToast("Order Accepted Successfully!");
+                loadSellerOrders(activeUserEmail);
+            } catch(e) {
+                alert("Error accepting order: " + e.message);
             }
+        }
+    };
+
+    function renderOrdersList(ordersToRender) {
+        const ordersList = document.getElementById('seller-orders-list');
+        if(!ordersList) return;
+        ordersList.innerHTML = ''; 
+        
+        if(ordersToRender.length === 0) {
+            ordersList.innerHTML = '<p style="padding: 20px; color: var(--text-muted); font-weight: 500;">No pending orders for your products right now.</p>';
+            return;
+        }
+
+        ordersToRender.forEach(order => {
+            const isAcceptedBySeller = order.seller_accepted === true;
+            const pMethod = order.payment_method || order.paymentMethod;
+            const isCOD = pMethod && pMethod.toUpperCase() === 'COD';
+            
+            let actionAreaHtml = '';
+            
+            if (isCOD && !isAcceptedBySeller) {
+                actionAreaHtml = `
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+                        <button type="button" class="action-btn btn-status-active" style="width: 100%; padding: 12px; font-size: 14px;" onclick="window.acceptOrder('${order.id}')">
+                            <i class="fa-solid fa-handshake"></i> Accept COD Order
+                        </button>
+                    </div>
+                `;
+            } else if (!order.shipping_label_url && !order.trackingId) {
+                const waitingText = isCOD 
+                    ? "Order Accepted. Waiting for Admin to generate tracking details..." 
+                    : "Prepaid Order Verified. Waiting for Admin to generate tracking details...";
+
+                actionAreaHtml = `
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb; text-align: center; color: var(--accent); font-weight: 600; font-size: 13px;">
+                        <i class="fa-solid fa-hourglass-half"></i> ${waitingText}
+                    </div>
+                `;
+            } else if (order.trackingId) {
+                actionAreaHtml = `
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb;">
+                        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+                            <strong>Courier:</strong> ${order.courierName} | <strong>Tracking:</strong> ${order.trackingId}
+                        </div>
+                    </div>
+                `;
+            }
+
+            let itemsHtml = order.items.map(i => `
+                <div style="display: flex; align-items: flex-start; gap: 14px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee;">
+                    <img src="${i.image || 'https://via.placeholder.com/80x100'}" style="width: 50px; height: 60px; object-fit: cover; border-radius: 4px;">
+                    <div style="line-height: 1.4; font-size:13px;">
+                        <strong style="font-size: 13px;">${i.quantity}x</strong> ${i.title} <br>
+                        <span style="color: var(--text-muted);">Size: ${i.size || 'N/A'}</span>
+                    </div>
+                </div>
+            `).join('');
+
+            ordersList.innerHTML += `
+                <div class="card" style="padding: 24px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                        <div>
+                            <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
+                            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
+                            <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
+                                ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
+                            </div>
+                        </div>
+                        <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
+                    </div>
+                    
+                    <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
+                        <strong style="color: var(--primary); display:flex; align-items: center; gap: 6px; margin-bottom:12px; font-size: 13px; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
+                            <i class="fa-solid fa-box-open" style="color: #3b82f6;"></i> Items to fulfill
+                        </strong>
+                        <div style="max-height: 150px; overflow-y: auto;">
+                            ${itemsHtml}
+                        </div>
+                    </div>
+
+                    ${actionAreaHtml}
+                </div>`;
+        });
+    }
+
+    window.handleProfilePhotoUpload = async function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const btnText = document.getElementById('profile-photo-btn-text');
+        if(btnText) btnText.innerText = "Uploading...";
+        
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("upload_preset", "jambawear_preset");
+            
+            const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
+            const data = await res.json();
+            
+            if (data.secure_url) {
+                tempProfilePhoto = data.secure_url;
+                setSellerProfile(prev => ({...prev, profilePhoto: data.secure_url}));
+                window.showToast("Photo uploaded! Click Save to confirm.");
+            } else {
+                throw new Error("Upload failed");
+            }
+        } catch (err) {
+            alert("Image upload failed: " + err.message);
+        } finally {
+            if(btnText) btnText.innerText = "Change Photo";
+            e.target.value = ""; 
+        }
+    };
+
+    const handleProfileSave = async function(e) {
+        e.preventDefault();
+
+        const accNum = document.getElementById('bank-acc-num').value;
+        const confirmAccNum = document.getElementById('bank-acc-num-confirm').value;
+        const ifsc = document.getElementById('bank-ifsc').value;
+        const confirmIfsc = document.getElementById('bank-ifsc-confirm').value;
+
+        if (accNum !== confirmAccNum) {
+            alert("Account Numbers do not match. Please verify carefully.");
+            return;
+        }
+
+        if (ifsc !== confirmIfsc) {
+            alert("IFSC Codes do not match. Please verify carefully.");
+            return;
+        }
+
+        const btn = document.getElementById('save-profile-btn');
+        btn.disabled = true;
+        btn.innerText = 'Saving...';
+
+        const profileData = {
+            email: activeUserEmail,
+            profilePhoto: tempProfilePhoto,
+            brandName: document.getElementById('prof-brand-name').value,
+            sellerName: document.getElementById('prof-seller-name').value,
+            storeEmail: document.getElementById('prof-email').value,
+            primaryPhone: document.getElementById('prof-phone-1').value,
+            secondaryPhone: document.getElementById('prof-phone-2').value,
+            
+            address: document.getElementById('prof-address').value,
+            town: document.getElementById('prof-town').value,
+            state: selectedState,
+            district: selectedDistrict,
+            pincode: document.getElementById('prof-pincode').value,
+            
+            pickupAddress: sameAsPermanent ? document.getElementById('prof-address').value : document.getElementById('pickup-address').value,
+            pickupTown: sameAsPermanent ? document.getElementById('prof-town').value : document.getElementById('pickup-town').value,
+            pickupState: sameAsPermanent ? selectedState : selectedPickupState,
+            pickupDistrict: sameAsPermanent ? selectedDistrict : selectedPickupDistrict,
+            pickupPincode: sameAsPermanent ? document.getElementById('prof-pincode').value : document.getElementById('pickup-pincode').value,
+            sameAsPermanent: sameAsPermanent,
+
+            bankName: document.getElementById('bank-name').value,
+            accName: document.getElementById('bank-acc-name').value,
+            accNumber: accNum,
+            ifsc: ifsc,
+            updated_at: new Date().toISOString()
         };
 
-    }, [sellerProfile, selectedState, selectedDistrict, selectedPickupState, selectedPickupDistrict, sameAsPermanent]);
+        try {
+            await setDoc(doc(db, "seller_profiles", activeUserEmail), profileData);
+            setSellerProfile(profileData); 
+            setIsProfileEditing(false); 
+            window.showToast("Store Profile Saved!");
+        } catch (err) {
+            alert("Failed to save profile.");
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Save Profile Details';
+        }
+    };
+
+    window.requestPayout = async function() {
+        if(!sellerProfile.accNumber) {
+            alert("Please save your Bank Details in the 'Store Profile' tab before requesting a payout.");
+            window.showSection('profile');
+            return;
+        }
+
+        if(wallet.available <= 0) {
+            alert("You have no available balance to withdraw.");
+            return;
+        }
+
+        if(confirm(`Request withdrawal of ₹${wallet.available}?`)) {
+            try {
+                await addDoc(collection(db, "payout_requests"), { 
+                    email: activeUserEmail, 
+                    amount: wallet.available,
+                    status: 'pending',
+                    date: new Date().toISOString()
+                });
+                window.showToast("Payout Request Submitted to Admin!");
+            } catch(err) {
+                alert("Failed to request payout.");
+            }
+        }
+    };
 
     return (
         <div className="seller-isolated-wrapper">
@@ -711,7 +686,7 @@ export default function SellerDashboard() {
                     <h3 style={{ color: 'var(--text-main)', marginBottom: '10px', fontSize: '16px' }}>Seller Dashboard</h3>
                     <p>Log in to manage your inventory and orders.</p>
                     <div className="login-error" id="login-error" style={{ display: 'none', marginBottom: '15px' }}></div>
-                    <button className="btn-submit" onClick={() => window.handleSellerLogin()} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                    <button type="button" className="btn-submit" onClick={() => window.handleSellerLogin()} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
                         <i className="fa-brands fa-google"></i> Sign In With Google
                     </button>
                 </div>
@@ -736,7 +711,7 @@ export default function SellerDashboard() {
                     <h1>Seller Dashboard</h1>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}><i className="fa-solid fa-user"></i> {sellerEmail}</span>
-                        <button className="btn-login" onClick={() => window.handleLogout()}>Logout</button>
+                        <button type="button" className="btn-login" onClick={() => window.handleLogout()}>Logout</button>
                     </div>
                 </div>
 
@@ -761,7 +736,7 @@ export default function SellerDashboard() {
                     <span className="section-title" style={{ marginBottom: '24px' }}>Submit/Edit Product</span>
                     <p className="text-helper" style={{ marginBottom: '20px' }}>Your brand and dispatch information will be automatically attached using your Store Profile.</p>
                     
-                    <form className="card" id="new-product-form" onSubmit={(e) => window.handleProductSubmit(e)}>
+                    <form className="card" id="new-product-form" onSubmit={handleProductSubmit}>
                         <span className="section-subtitle">Product Details</span>
                         <div className="field-grid">
                             <div className="form-group"><span className="label">Product Name</span><input type="text" id="p-name" className="input-box" placeholder="e.g. Classic Bodo Waistcoat" required /></div>
@@ -841,7 +816,7 @@ export default function SellerDashboard() {
                         <div className="card" style={{ padding: '24px', marginBottom: '0', borderLeft: '4px solid var(--success)' }}>
                             <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: '500', marginBottom: '8px' }}>Available for Payout</div>
                             <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--success)' }}>₹{wallet.available}</div>
-                            <button className="action-btn" onClick={() => window.requestPayout()} style={{ marginTop: '12px', background: 'var(--primary)', color: 'white', border: 'none', width: '100%' }}>
+                            <button type="button" className="action-btn" onClick={() => window.requestPayout()} style={{ marginTop: '12px', background: 'var(--primary)', color: 'white', border: 'none', width: '100%' }}>
                                 Request Payout
                             </button>
                         </div>
@@ -893,7 +868,7 @@ export default function SellerDashboard() {
                         /* --- EDIT FORM UI --- */
                         <>
                             <span className="section-title" style={{ marginBottom: '24px' }}>Store Settings & Bank Details</span>
-                            <form className="card" onSubmit={(e) => window.handleProfileSave(e)}>
+                            <form className="card" onSubmit={handleProfileSave}>
                                 
                                 <span className="section-subtitle"><i className="fa-solid fa-address-card" style={{ color: 'var(--text-muted)' }}></i> Identity & Branding</span>
                                 
@@ -946,7 +921,7 @@ export default function SellerDashboard() {
                                         <span className="label">District</span>
                                         <select id="prof-district" className="input-box" required value={selectedDistrict} onChange={(e) => setSelectedDistrict(e.target.value)} disabled={!selectedState}>
                                             <option value="" disabled>Select District</option>
-                                            {selectedState && stateDistrictMap[selectedState]?.sort().map(dist => <option key={dist} value={dist}>{dist}</option>)}
+                                            {selectedState && stateDistrictMap[selectedState] ? stateDistrictMap[selectedState].map(dist => <option key={dist} value={dist}>{dist}</option>) : null}
                                         </select>
                                     </div>
                                 </div>
@@ -996,7 +971,7 @@ export default function SellerDashboard() {
                                         <span className="label">District</span>
                                         <select id="pickup-district" className="input-box" required value={selectedPickupDistrict} onChange={(e) => setSelectedPickupDistrict(e.target.value)} disabled={!selectedPickupState || sameAsPermanent}>
                                             <option value="" disabled>Select District</option>
-                                            {selectedPickupState && stateDistrictMap[selectedPickupState]?.sort().map(dist => <option key={dist} value={dist}>{dist}</option>)}
+                                            {selectedPickupState && stateDistrictMap[selectedPickupState] ? stateDistrictMap[selectedPickupState].map(dist => <option key={dist} value={dist}>{dist}</option>) : null}
                                         </select>
                                     </div>
                                 </div>
@@ -1034,7 +1009,7 @@ export default function SellerDashboard() {
                         <>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                                 <span className="section-title" style={{ margin: 0 }}>Store Profile</span>
-                                <button className="btn-login" onClick={() => setIsProfileEditing(true)}>
+                                <button type="button" className="btn-login" onClick={() => setIsProfileEditing(true)}>
                                     <i className="fa-solid fa-pen" style={{ marginRight: '6px' }}></i> Edit Profile
                                 </button>
                             </div>
