@@ -23,10 +23,12 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 GLOBAL VARIABLES (Prevents React from wiping them during re-renders)
+// 🚀 GLOBAL VARIABLES: Moved OUTSIDE the component so React never wipes them!
 let currentEditImageUrls = [];
 let selectedFiles = [];
-let editingProductId = null; // Tracks if we are editing an existing product
+let editingProductId = null; 
+let activeUserEmail = ""; // Fixes the Edit Profile Save Bug!
+let tempProfilePhoto = ""; // Stores the logo before saving
 
 const stateDistrictMap = {
     "Assam": ["Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar", "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh", "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat", "Kamrup Metropolitan", "Kamrup", "Karbi Anglong", "Karimganj", "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari", "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tinsukia", "Udalguri", "West Karbi Anglong"],
@@ -44,11 +46,9 @@ const stateDistrictMap = {
 
 export default function SellerDashboard() {
     const [sellerEmail, setSellerEmail] = useState("");
-    
-    const [wallet, setWallet] = useState({ available: 0, pending: 0, withdrawn: 0 });
+     const [wallet, setWallet] = useState({ available: 0, pending: 0, withdrawn: 0 });
     const [payoutHistory, setPayoutHistory] = useState([]);
-    const [sellerProfile, setSellerProfile] = useState({}); 
-    
+     const [sellerProfile, setSellerProfile] = useState({}); 
     const [isProfileEditing, setIsProfileEditing] = useState(true);
 
     const [selectedState, setSelectedState] = useState("");
@@ -98,19 +98,18 @@ export default function SellerDashboard() {
             }
         };
 
-        let hasBootstrapped = false;
-        let currentEmail = "";
-
-        // 🚀 SERVERLESS AUTH CHECK
+         let hasBootstrapped = false;
+ 
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
             
             if (user) {
-                currentEmail = user.email;
+                activeUserEmail = user.email; // Save globally
+                setSellerEmail(user.email);
                 
                 try {
-                    const docRef = doc(db, "authorized_sellers", currentEmail);
+                    const docRef = doc(db, "authorized_sellers", activeUserEmail);
                     const docSnap = await getDoc(docRef);
                     
                     if (!docSnap.exists()) {
@@ -118,29 +117,19 @@ export default function SellerDashboard() {
                         if (errorMsg) {
                             errorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Unauthorized: Email not registered. Please contact JAMBAWEAR Admin.`;
                             errorMsg.style.display = 'block';
-                            errorMsg.style.color = '#dc2626';
-                            errorMsg.style.background = '#fee2e2';
-                            errorMsg.style.padding = '10px';
-                            errorMsg.style.borderRadius = '6px';
-                            errorMsg.style.fontSize = '13px';
                         }
                         return; 
                     }
 
-                    setSellerEmail(currentEmail);
                     if (errorMsg) errorMsg.style.display = 'none';
                     if (overlay) overlay.style.display = 'none';
                     
                     if (!hasBootstrapped) {
                         hasBootstrapped = true;
-                        await bootstrapData(currentEmail); 
+                        await bootstrapData(activeUserEmail); 
                     }
                 } catch (err) {
-                    console.error("Verification failed", err);
-                    if (errorMsg) {
-                        errorMsg.innerHTML = "Server error during verification. Please try again later.";
-                        errorMsg.style.display = 'block';
-                    }
+                     console.error("Verification failed", err);
                 }
             } else {
                 if (overlay) overlay.style.display = 'flex';
@@ -181,9 +170,7 @@ export default function SellerDashboard() {
                 promptContent.style.display = 'none';
                 previewContainer.style.display = 'flex';
 
-                let html = '';
-                
-                // Show existing images if editing
+                 let html = '';
                 currentEditImageUrls.forEach((url, index) => {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
@@ -192,8 +179,7 @@ export default function SellerDashboard() {
                         </div>
                     `;
                 });
-
-                // Show newly selected images
+ 
                 selectedFiles.forEach((file, index) => {
                     const objectUrl = URL.createObjectURL(file);
                     html += `
@@ -232,8 +218,7 @@ export default function SellerDashboard() {
             e.target.value = ""; 
             window.renderImagePreview();
         };
-
-        // 🚀 SERVERLESS: SUBMIT NEW OR UPDATED PRODUCT
+ 
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -269,7 +254,7 @@ export default function SellerDashboard() {
                     title: document.getElementById('p-name').value || "",
                     original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
                     selling_price: parseFloat(document.getElementById('p-price').value) || 0,
-                    stock: parseInt(document.getElementById('p-stock').value) || 0, // NEW STOCK FIELD
+                    stock: parseInt(document.getElementById('p-stock').value) || 0, 
                     category: (document.getElementById('p-category').value || "") + " - " + (document.getElementById('p-gender').value || ""),
                     images: finalUrls,
                     description: document.getElementById('p-desc').value || "",
@@ -279,7 +264,7 @@ export default function SellerDashboard() {
                     brandName: sellerProfile.brandName || "",
                     sellerName: sellerProfile.sellerName || "",
                     sellerPhone: sellerProfile.primaryPhone || "",
-                    sellerEmail: sellerProfile.storeEmail || currentEmail, 
+                    sellerEmail: sellerProfile.storeEmail || activeUserEmail, 
                     
                     sellerAddress: sellerProfile.address || "",
                     city: sellerProfile.town || "",
@@ -295,8 +280,7 @@ export default function SellerDashboard() {
                     
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
-                    
-                    // Edits reset product back to pending/hidden for safety!
+                     
                     approval_status: "pending", 
                     isHidden: true,
                     updated_at: new Date().toISOString()
@@ -311,8 +295,7 @@ export default function SellerDashboard() {
                     await addDoc(collection(db, "products"), productData);
                     window.showToast("Product Submitted for Admin Approval!");
                 }
-
-                // Reset forms
+ 
                 document.getElementById('new-product-form').reset();
                 document.getElementById('cancel-edit-btn').style.display = "none";
                 editingProductId = null;
@@ -321,7 +304,7 @@ export default function SellerDashboard() {
                 window.renderImagePreview();
                 
                 showSection('live-products', document.querySelectorAll('.nav-item')[1]);
-                loadSellerInventory(currentEmail);
+                loadSellerInventory(activeUserEmail);
             } catch (err) { 
                 alert("Error submitting product: " + err.message); 
             } finally { 
@@ -330,10 +313,9 @@ export default function SellerDashboard() {
             }
         };
 
-        // 🚀 SERVERLESS: EDIT/CANCEL ACTIONS
         window.editProduct = function(encodedProduct) {
             const product = JSON.parse(decodeURIComponent(encodedProduct));
-            editingProductId = product.id; // Save ID globally
+            editingProductId = product.id; 
 
             document.getElementById('p-name').value = product.title || "";
             document.getElementById('p-original-price').value = product.original_price || product.selling_price || 0;
@@ -404,8 +386,7 @@ export default function SellerDashboard() {
 
             productsToRender.forEach((product) => {
                 let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
-                
-                const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
+                 const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
 
                 let statusBadge = '';
                 if (product.approval_status === 'pending') {
@@ -463,7 +444,7 @@ export default function SellerDashboard() {
                         accepted_at: new Date().toISOString()
                     });
                     window.showToast("Order Accepted Successfully!");
-                    loadSellerOrders(currentEmail);
+                    loadSellerOrders(activeUserEmail);
                 } catch(e) {
                     alert("Error accepting order: " + e.message);
                 }
@@ -530,12 +511,12 @@ export default function SellerDashboard() {
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
                             <div>
                                 <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
                                 <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
                                     ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
                                 </div>
                             </div>
-                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total}</div>
+                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
                         </div>
                         
                         <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
@@ -560,6 +541,8 @@ export default function SellerDashboard() {
                 if (profileSnap.exists()) {
                     const data = profileSnap.data();
                     setSellerProfile(data);
+                    tempProfilePhoto = data.profilePhoto || ""; // Set temp memory
+                    
                     setSameAsPermanent(data.sameAsPermanent || false);
                     setSelectedState(data.state || "");
                     setSelectedDistrict(data.district || "");
@@ -578,6 +561,37 @@ export default function SellerDashboard() {
                 setIsProfileEditing(true);
             }
         }
+
+        // 🚀 NEW: PROFILE PHOTO UPLOAD LOGIC
+        window.handleProfilePhotoUpload = async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const btnText = document.getElementById('profile-photo-btn-text');
+            if(btnText) btnText.innerText = "Uploading...";
+            
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("upload_preset", "jambawear_preset");
+                
+                const res = await fetch("https://api.cloudinary.com/v1_1/dbbafwgug/image/upload", { method: "POST", body: formData });
+                const data = await res.json();
+                
+                if (data.secure_url) {
+                    tempProfilePhoto = data.secure_url;
+                    setSellerProfile(prev => ({...prev, profilePhoto: data.secure_url}));
+                    window.showToast("Photo uploaded! Click Save to confirm.");
+                } else {
+                    throw new Error("Upload failed");
+                }
+            } catch (err) {
+                alert("Image upload failed: " + err.message);
+            } finally {
+                if(btnText) btnText.innerText = "Change Photo";
+                e.target.value = ""; 
+            }
+        };
 
         window.handleProfileSave = async function(e) {
             e.preventDefault();
@@ -602,7 +616,8 @@ export default function SellerDashboard() {
             btn.innerText = 'Saving...';
 
             const profileData = {
-                email: currentEmail,
+                email: activeUserEmail,
+                profilePhoto: tempProfilePhoto,
                 brandName: document.getElementById('prof-brand-name').value,
                 sellerName: document.getElementById('prof-seller-name').value,
                 storeEmail: document.getElementById('prof-email').value,
@@ -630,7 +645,7 @@ export default function SellerDashboard() {
             };
 
             try {
-                await setDoc(doc(db, "seller_profiles", currentEmail), profileData);
+                await setDoc(doc(db, "seller_profiles", activeUserEmail), profileData);
                 setSellerProfile(profileData); 
                 setIsProfileEditing(false); 
                 window.showToast("Store Profile Saved!");
@@ -657,7 +672,7 @@ export default function SellerDashboard() {
             if(confirm(`Request withdrawal of ₹${wallet.available}?`)) {
                 try {
                     await addDoc(collection(db, "payout_requests"), { 
-                        email: currentEmail, 
+                        email: activeUserEmail, 
                         amount: wallet.available,
                         status: 'pending',
                         date: new Date().toISOString()
@@ -793,7 +808,7 @@ export default function SellerDashboard() {
                         </div>
                         
                         <button type="submit" id="submit-btn" className="btn-submit">Submit for Admin Approval</button> 
-                        <button type="button" id="cancel-edit-btn" className="btn-submit" style={{ background: '#ffffff', color: 'var(--text-main)', border: '1px solid var(--input-border)', display: 'none' }} onClick={() => window.cancelEdit()}>Cancel Edit</button> 
+                        <button type="button" id="cancel-edit-btn" className="btn-submit" style={{ background: '#ffffff', color: 'var(--text-main)', border: '1px solid var(--input-border)', display: 'none', marginLeft: '10px' }} onClick={() => window.cancelEdit()}>Cancel Edit</button> 
                     </form>
                 </div>
 
@@ -865,7 +880,25 @@ export default function SellerDashboard() {
                             <span className="section-title" style={{ marginBottom: '24px' }}>Store Settings & Bank Details</span>
                             <form className="card" onSubmit={(e) => window.handleProfileSave(e)}>
                                 
-                                <span className="section-subtitle"><i className="fa-solid fa-address-card" style={{ color: 'var(--text-muted)' }}></i> Identity</span>
+                                <span className="section-subtitle"><i className="fa-solid fa-address-card" style={{ color: 'var(--text-muted)' }}></i> Identity & Branding</span>
+                                
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+                                    <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: 'bold', overflow: 'hidden', border: '2px solid #e5e7eb' }}>
+                                        {sellerProfile.profilePhoto ? (
+                                            <img src={sellerProfile.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                            sellerProfile.brandName ? sellerProfile.brandName.charAt(0).toUpperCase() : 'S'
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label htmlFor="profile-photo-upload" className="action-btn" style={{ background: '#f3f4f6', color: 'var(--text-main)', border: '1px solid var(--input-border)', cursor: 'pointer', display: 'inline-block', padding: '8px 16px' }}>
+                                            <i className="fa-solid fa-camera"></i> <span id="profile-photo-btn-text">Upload Store Logo</span>
+                                        </label>
+                                        <input id="profile-photo-upload" type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => window.handleProfilePhotoUpload(e)} />
+                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>Square image recommended (Max 2MB)</div>
+                                    </div>
+                                </div>
+
                                 <div className="field-grid">
                                     <div className="form-group"><span className="label">Brand Name</span><input type="text" id="prof-brand-name" defaultValue={sellerProfile.brandName || ""} className="input-box" placeholder="e.g. Bodo Weavers Auth" required /></div>
                                     <div className="form-group"><span className="label">Seller Name</span><input type="text" id="prof-seller-name" defaultValue={sellerProfile.sellerName || ""} className="input-box" placeholder="Owner's full name" required /></div>
@@ -993,8 +1026,12 @@ export default function SellerDashboard() {
 
                             <div className="card" style={{ padding: '32px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '30px', paddingBottom: '20px', borderBottom: '1px solid #f3f4f6' }}>
-                                    <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 'bold' }}>
-                                        {sellerProfile.brandName ? sellerProfile.brandName.charAt(0).toUpperCase() : 'S'}
+                                    <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 'bold', overflow: 'hidden' }}>
+                                        {sellerProfile.profilePhoto ? (
+                                            <img src={sellerProfile.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                            sellerProfile.brandName ? sellerProfile.brandName.charAt(0).toUpperCase() : 'S'
+                                        )}
                                     </div>
                                     <div>
                                         <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--primary)' }}>{sellerProfile.brandName}</div>
