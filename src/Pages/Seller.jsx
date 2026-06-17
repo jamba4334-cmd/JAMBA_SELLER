@@ -23,9 +23,10 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 THE FIX: Moved to global scope so React re-renders never wipe them!
+// 🚀 GLOBAL VARIABLES (Prevents React from wiping them during re-renders)
 let currentEditImageUrls = [];
 let selectedFiles = [];
+let editingProductId = null; // Tracks if we are editing an existing product
 
 const stateDistrictMap = {
     "Assam": ["Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar", "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh", "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat", "Kamrup Metropolitan", "Kamrup", "Karbi Anglong", "Karimganj", "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari", "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tinsukia", "Udalguri", "West Karbi Anglong"],
@@ -100,6 +101,7 @@ export default function SellerDashboard() {
         let hasBootstrapped = false;
         let currentEmail = "";
 
+        // 🚀 SERVERLESS AUTH CHECK
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
@@ -180,6 +182,18 @@ export default function SellerDashboard() {
                 previewContainer.style.display = 'flex';
 
                 let html = '';
+                
+                // Show existing images if editing
+                currentEditImageUrls.forEach((url, index) => {
+                    html += `
+                        <div style="position:relative; display:inline-block; margin: 4px;">
+                            <img src="${url}" alt="Preview" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--input-border);">
+                            <button type="button" onclick="window.removeEditImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    `;
+                });
+
+                // Show newly selected images
                 selectedFiles.forEach((file, index) => {
                     const objectUrl = URL.createObjectURL(file);
                     html += `
@@ -196,6 +210,11 @@ export default function SellerDashboard() {
             }
         };
 
+        window.removeEditImage = function(index) {
+            currentEditImageUrls.splice(index, 1);
+            window.renderImagePreview();
+        };
+
         window.removeNewImage = function(index) {
             selectedFiles.splice(index, 1);
             document.getElementById('file-upload').value = "";
@@ -204,7 +223,7 @@ export default function SellerDashboard() {
 
         window.handleFileSelect = function(e) {
             const files = Array.from(e.target.files);
-            if (selectedFiles.length + files.length > 5) {
+            if (currentEditImageUrls.length + selectedFiles.length + files.length > 5) {
                 alert("You can only have a maximum of 5 images per product.");
                 e.target.value = "";
                 return;
@@ -214,6 +233,7 @@ export default function SellerDashboard() {
             window.renderImagePreview();
         };
 
+        // 🚀 SERVERLESS: SUBMIT NEW OR UPDATED PRODUCT
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -224,12 +244,13 @@ export default function SellerDashboard() {
                 alert("Please complete your Store Profile (Brand, Permanent & Pickup Location) before submitting a product!");
                 window.showSection('profile', document.querySelectorAll('.nav-item')[4]);
                 submitBtn.disabled = false;
-                submitBtn.innerText = "Submit for Admin Approval";
+                submitBtn.innerText = editingProductId ? "Update & Request Approval" : "Submit for Admin Approval";
                 return;
             }
 
             try {
-                let finalUrls = [];
+                let finalUrls = [...currentEditImageUrls];
+                
                 if (selectedFiles.length > 0) {
                     for (const file of selectedFiles) {
                         const formData = new FormData();
@@ -245,10 +266,10 @@ export default function SellerDashboard() {
                 if (finalUrls.length === 0) throw new Error("Please upload at least 1 image.");
 
                 const productData = {
-                    item_id: "JW" + Date.now().toString().slice(-6),
                     title: document.getElementById('p-name').value || "",
                     original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
                     selling_price: parseFloat(document.getElementById('p-price').value) || 0,
+                    stock: parseInt(document.getElementById('p-stock').value) || 0, // NEW STOCK FIELD
                     category: (document.getElementById('p-category').value || "") + " - " + (document.getElementById('p-gender').value || ""),
                     images: finalUrls,
                     description: document.getElementById('p-desc').value || "",
@@ -275,16 +296,28 @@ export default function SellerDashboard() {
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
                     
+                    // Edits reset product back to pending/hidden for safety!
                     approval_status: "pending", 
                     isHidden: true,
-                    created_at: new Date().toISOString()
+                    updated_at: new Date().toISOString()
                 };
 
-                await addDoc(collection(db, "products"), productData);
+                if (editingProductId) {
+                    await updateDoc(doc(db, "products", editingProductId), productData);
+                    window.showToast("Product Updated & Sent for Approval!");
+                } else {
+                    productData.item_id = "JW" + Date.now().toString().slice(-6);
+                    productData.created_at = new Date().toISOString();
+                    await addDoc(collection(db, "products"), productData);
+                    window.showToast("Product Submitted for Admin Approval!");
+                }
 
-                window.showToast("Product Submitted for Admin Approval!");
+                // Reset forms
                 document.getElementById('new-product-form').reset();
-                selectedFiles = []; // Clear global memory
+                document.getElementById('cancel-edit-btn').style.display = "none";
+                editingProductId = null;
+                currentEditImageUrls = [];
+                selectedFiles = [];
                 window.renderImagePreview();
                 
                 showSection('live-products', document.querySelectorAll('.nav-item')[1]);
@@ -295,6 +328,54 @@ export default function SellerDashboard() {
                 submitBtn.disabled = false; 
                 submitBtn.innerText = "Submit for Admin Approval"; 
             }
+        };
+
+        // 🚀 SERVERLESS: EDIT/CANCEL ACTIONS
+        window.editProduct = function(encodedProduct) {
+            const product = JSON.parse(decodeURIComponent(encodedProduct));
+            editingProductId = product.id; // Save ID globally
+
+            document.getElementById('p-name').value = product.title || "";
+            document.getElementById('p-original-price').value = product.original_price || product.selling_price || 0;
+            document.getElementById('p-price').value = product.selling_price || 0;
+            document.getElementById('p-stock').value = product.stock || 0;
+            
+            const parts = (product.category || "").split(' - ');
+            const catName = parts[0] ? parts[0].trim() : '';
+            const genName = parts[1] ? parts[1].trim() : '';
+            
+            document.getElementById('p-gender').value = genName;
+            window.updateCategoryOptions(genName, catName);
+
+            document.getElementById('p-color').value = product.color || "";
+            document.getElementById('p-fabric').value = product.fabric || "";
+            document.getElementById('p-desc').value = product.description || "";
+            
+            document.getElementById('p-pay-cod').checked = product.allow_cod !== false; 
+            document.getElementById('p-pay-online').checked = product.allow_online !== false; 
+
+            currentEditImageUrls = product.images || [];
+            selectedFiles = [];
+            window.renderImagePreview();
+
+            document.getElementById('submit-btn').innerText = "Update & Request Approval";
+            document.getElementById('cancel-edit-btn').style.display = "inline-block";
+            showSection('add-product', document.querySelectorAll('.nav-item')[2]);
+        };
+
+        window.cancelEdit = function() {
+            document.getElementById('new-product-form').reset();
+            document.getElementById('p-pay-cod').checked = true; 
+            document.getElementById('p-pay-online').checked = true; 
+            
+            editingProductId = null;
+            currentEditImageUrls = [];
+            selectedFiles = [];
+            window.renderImagePreview();
+
+            document.getElementById('submit-btn').innerText = "Submit for Admin Approval";
+            document.getElementById('cancel-edit-btn').style.display = "none";
+            showSection('live-products', document.querySelectorAll('.nav-item')[1]);
         };
 
         async function loadSellerInventory(email) {
@@ -324,6 +405,8 @@ export default function SellerDashboard() {
             productsToRender.forEach((product) => {
                 let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
                 
+                const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
+
                 let statusBadge = '';
                 if (product.approval_status === 'pending') {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Admin Approval</span>';
@@ -338,9 +421,12 @@ export default function SellerDashboard() {
                     <div style="flex: 1;">
                         <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 8px;">${product.title}</div>
                         <div style="font-size: 14px; color: var(--text-main); margin-bottom: 12px;">
-                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${product.category || 'N/A'}
+                            <span style="font-weight: 600;">₹${product.selling_price}</span> &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; ${product.category || 'N/A'} &nbsp;<span style="color:#d1d5db;">|</span>&nbsp; Stock: <strong>${product.stock || 0}</strong>
                         </div>
-                        <div style="margin-top: 10px;">${statusBadge}</div>
+                        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                            ${statusBadge}
+                            <button class="action-btn btn-edit" style="padding: 6px 12px; font-size: 12px;" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
+                        </div>
                     </div>
                     <img src="${mainImgUrl}" style="width:90px; height:90px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
                 </div>`;
@@ -444,12 +530,12 @@ export default function SellerDashboard() {
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
                             <div>
                                 <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at).toLocaleString()}</div>
                                 <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
                                     ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
                                 </div>
                             </div>
-                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
+                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total}</div>
                         </div>
                         
                         <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
@@ -640,9 +726,9 @@ export default function SellerDashboard() {
                     </div>
                 </div>
 
-                {/* SUBMIT PRODUCT TAB */}
+                {/* SUBMIT/EDIT PRODUCT TAB */}
                 <div id="add-product" className="content-section">
-                    <span className="section-title" style={{ marginBottom: '24px' }}>Submit New Product</span>
+                    <span className="section-title" style={{ marginBottom: '24px' }}>Submit/Edit Product</span>
                     <p className="text-helper" style={{ marginBottom: '20px' }}>Your brand and dispatch information will be automatically attached using your Store Profile.</p>
                     
                     <form className="card" id="new-product-form" onSubmit={(e) => window.handleProductSubmit(e)}>
@@ -669,6 +755,7 @@ export default function SellerDashboard() {
                                     <option value="" disabled>Select Department First</option>
                                 </select>
                             </div>
+                            <div className="form-group"><span className="label">Available Stock</span><input type="number" id="p-stock" className="input-box" placeholder="e.g. 50" required min="0" /></div>
                         </div>
                         
                         <div className="field-grid">
@@ -706,6 +793,7 @@ export default function SellerDashboard() {
                         </div>
                         
                         <button type="submit" id="submit-btn" className="btn-submit">Submit for Admin Approval</button> 
+                        <button type="button" id="cancel-edit-btn" className="btn-submit" style={{ background: '#ffffff', color: 'var(--text-main)', border: '1px solid var(--input-border)', display: 'none' }} onClick={() => window.cancelEdit()}>Cancel Edit</button> 
                     </form>
                 </div>
 
