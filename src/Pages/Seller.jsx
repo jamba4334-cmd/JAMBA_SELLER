@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Seller.css";
 
 const firebaseConfig = {
@@ -96,8 +95,7 @@ export default function SellerDashboard() {
 
         let hasBootstrapped = false;
         let currentEmail = "";
-
-        // 🚀 NEW: THE BOUNCER CHECK (Auth Verification)
+ 
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
@@ -106,11 +104,10 @@ export default function SellerDashboard() {
                 currentEmail = user.email;
                 
                 try {
-                    // Ask the backend if this email is on the Admin's VIP list
-                    const verifyRes = await fetch(`${API_BASE_URL}/seller/verify?email=${currentEmail}`);
+                    const docRef = doc(db, "authorized_sellers", currentEmail);
+                    const docSnap = await getDoc(docRef);
                     
-                    if (!verifyRes.ok) {
-                        // KICK THEM OUT! They are not authorized by Admin.
+                    if (!docSnap.exists()) {
                         await signOut(auth);
                         if (errorMsg) {
                             errorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Unauthorized: Email not registered. Please contact JAMBAWEAR Admin.`;
@@ -121,10 +118,9 @@ export default function SellerDashboard() {
                             errorMsg.style.borderRadius = '6px';
                             errorMsg.style.fontSize = '13px';
                         }
-                        return; // Stop the code right here so dashboard doesn't load
+                        return; 
                     }
-
-                    // If they pass the check, let them in!
+ 
                     setSellerEmail(currentEmail);
                     if (errorMsg) errorMsg.style.display = 'none';
                     if (overlay) overlay.style.display = 'none';
@@ -188,7 +184,7 @@ export default function SellerDashboard() {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
                             <img src="${objectUrl}" alt="Preview" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid var(--success);">
-                            <button type="button" onclick="window.removeNewImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
+                            <button type="button" onclick="window.removeNewImage(${index})" style="position:absolute; top:-8px; right:-8px; background:var(--danger); color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; alignItems:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `;
                 });
@@ -248,6 +244,7 @@ export default function SellerDashboard() {
                 if (finalUrls.length === 0) throw new Error("Please upload at least 1 image.");
 
                 const productData = {
+                    item_id: "JW" + Date.now().toString().slice(-6),
                     title: document.getElementById('p-name').value || "",
                     original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
                     selling_price: parseFloat(document.getElementById('p-price').value) || 0,
@@ -265,28 +262,23 @@ export default function SellerDashboard() {
                     sellerAddress: sellerProfile.address || "",
                     city: sellerProfile.town || "",
                     district: sellerProfile.district || "",
-                    state: sellerProfile.state || "",
+                    state: selectedState || "",
                     pincode: sellerProfile.pincode || "",
 
                     pickupAddress: sellerProfile.pickupAddress || "",
                     pickupTown: sellerProfile.pickupTown || "",
-                    pickupDistrict: sellerProfile.pickupDistrict || "",
-                    pickupState: sellerProfile.pickupState || "",
+                    pickupDistrict: selectedPickupDistrict || "",
+                    pickupState: selectedPickupState || "",
                     pickupPincode: sellerProfile.pickupPincode || "",
                     
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
                     approval_status: "pending", 
-                    isHidden: true 
+                    isHidden: true,
+                    created_at: new Date().toISOString()
                 };
 
-                const response = await fetch(`${API_BASE_URL}/seller/products`, {
-                    method: "POST",
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(productData)
-                });
-
-                if (!response.ok) throw new Error("Failed to submit product.");
+                await addDoc(collection(db, "products"), productData);
 
                 window.showToast("Product Submitted for Admin Approval!");
                 document.getElementById('new-product-form').reset();
@@ -305,11 +297,13 @@ export default function SellerDashboard() {
 
         async function loadSellerInventory(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/products?email=${email}`);
-                if (!response.ok) throw new Error("Failed to load inventory.");
-                
-                const data = await response.json();
-                renderInventoryList(data);
+                const q = query(collection(db, "products"), where("sellerEmail", "==", email));
+                const querySnapshot = await getDocs(q);
+                let products = [];
+                querySnapshot.forEach((doc) => {
+                    products.push({ id: doc.id, ...doc.data() });
+                });
+                renderInventoryList(products);
             } catch (err) {
                 console.error("Inventory Load Error:", err);
             }
@@ -353,10 +347,21 @@ export default function SellerDashboard() {
 
         async function loadSellerOrders(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/orders?email=${email}`);
-                if (!response.ok) throw new Error("Failed to load orders.");
-                const data = await response.json();
-                renderOrdersList(data);
+                const querySnapshot = await getDocs(collection(db, "orders"));
+                let sellerOrders = [];
+                
+                querySnapshot.forEach(document => {
+                    const orderData = document.data();
+                    if(orderData.items) {
+                        const hasMyItems = orderData.items.some(item => item.sellerEmail === email || item.brandName === sellerProfile.brandName);
+                        if(hasMyItems) {
+                            sellerOrders.push({ id: document.id, ...orderData });
+                        }
+                    }
+                });
+
+                sellerOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
+                renderOrdersList(sellerOrders);
             } catch (error) {
                 console.error("Error loading orders:", error);
             }
@@ -365,10 +370,9 @@ export default function SellerDashboard() {
         window.acceptOrder = async function(orderId) {
             if(confirm("By accepting, you confirm you have this item in stock and will prepare it for pickup.")) {
                 try {
-                    await fetch(`${API_BASE_URL}/seller/orders/${orderId}/accept`, {
-                        method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ seller_email: currentEmail })
+                    await updateDoc(doc(db, "orders", orderId), { 
+                        seller_accepted: true,
+                        accepted_at: new Date().toISOString()
                     });
                     window.showToast("Order Accepted Successfully!");
                     loadSellerOrders(currentEmail);
@@ -403,7 +407,7 @@ export default function SellerDashboard() {
                             </button>
                         </div>
                     `;
-                } else if (!order.shipping_label_url) {
+                } else if (!order.shipping_label_url && !order.trackingId) {
                     const waitingText = isCOD 
                         ? "Order Accepted. Waiting for Admin to generate shipping label..." 
                         : "Prepaid Order Verified. Waiting for Admin to generate shipping label...";
@@ -413,17 +417,12 @@ export default function SellerDashboard() {
                             <i class="fa-solid fa-hourglass-half"></i> ${waitingText}
                         </div>
                     `;
-                } else if (order.shipping_label_url) {
+                } else if (order.trackingId) {
                     actionAreaHtml = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb;">
-                            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                <strong>Courier:</strong> ${order.courierName} | <strong>Tracking:</strong> ${order.trackingId}
+                            <div style="font-size: 13px; color: var(--text-main); margin-bottom: 10px; background: #f3f4f6; padding: 12px; border-radius: 6px;">
+                                <i class="fa-solid fa-truck-fast"></i> <strong>Courier:</strong> ${order.courierName || 'N/A'} | <strong>Tracking:</strong> ${order.trackingId}
                             </div>
-                            <a href="${order.shipping_label_url}" download target="_blank" style="text-decoration: none;">
-                                <button class="action-btn" style="width: 100%; padding: 12px; font-size: 14px; background: var(--primary); color: white;">
-                                    <i class="fa-solid fa-download"></i> Download Shipping Label
-                                </button>
-                            </a>
                         </div>
                     `;
                 }
@@ -443,12 +442,12 @@ export default function SellerDashboard() {
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
                             <div>
                                 <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
                                 <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
                                     ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
                                 </div>
                             </div>
-                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total}</div>
+                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
                         </div>
                         
                         <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
@@ -467,26 +466,25 @@ export default function SellerDashboard() {
 
         async function loadSellerProfileAndWallet(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/profile?email=${email}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    if(data.profile && data.profile.brandName) {
-                        setSellerProfile(data.profile);
-                        setSameAsPermanent(data.profile.sameAsPermanent || false);
-                        setSelectedState(data.profile.state || "");
-                        setSelectedDistrict(data.profile.district || "");
-                        setSelectedPickupState(data.profile.pickupState || "");
-                        setSelectedPickupDistrict(data.profile.pickupDistrict || "");
-                        
-                        setIsProfileEditing(false);
-                    } else {
-                        setIsProfileEditing(true);
-                    }
-
-                    if(data.wallet) setWallet(data.wallet);
-                    if(data.payouts) setPayoutHistory(data.payouts);
+                const profileRef = doc(db, "seller_profiles", email);
+                const profileSnap = await getDoc(profileRef);
+                
+                if (profileSnap.exists()) {
+                    const data = profileSnap.data();
+                    setSellerProfile(data);
+                    setSameAsPermanent(data.sameAsPermanent || false);
+                    setSelectedState(data.state || "");
+                    setSelectedDistrict(data.district || "");
+                    setSelectedPickupState(data.pickupState || "");
+                    setSelectedPickupDistrict(data.pickupDistrict || "");
+                    setIsProfileEditing(false);
+                } else {
+                    setIsProfileEditing(true);
                 }
+
+                setWallet({ available: 0, pending: 0, withdrawn: 0 });
+                setPayoutHistory([]);
+
             } catch (err) {
                 console.log("Could not fetch profile yet, keeping edit mode open.");
                 setIsProfileEditing(true);
@@ -540,19 +538,17 @@ export default function SellerDashboard() {
                 accName: document.getElementById('bank-acc-name').value,
                 accNumber: accNum,
                 ifsc: ifsc,
+                updated_at: new Date().toISOString()
             };
 
             try {
-                await fetch(`${API_BASE_URL}/seller/profile`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(profileData)
-                });
+                await setDoc(doc(db, "seller_profiles", currentEmail), profileData);
                 setSellerProfile(profileData); 
                 setIsProfileEditing(false); 
                 window.showToast("Store Profile Saved!");
             } catch (err) {
                 alert("Failed to save profile.");
+                console.error(err);
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Save Profile Details';
@@ -573,13 +569,13 @@ export default function SellerDashboard() {
 
             if(confirm(`Request withdrawal of ₹${wallet.available}?`)) {
                 try {
-                    await fetch(`${API_BASE_URL}/seller/payouts/request`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email: currentEmail, amount: wallet.available })
+                    await addDoc(collection(db, "payout_requests"), { 
+                        email: currentEmail, 
+                        amount: wallet.available,
+                        status: 'pending',
+                        date: new Date().toISOString()
                     });
                     window.showToast("Payout Request Submitted to Admin!");
-                    loadSellerProfileAndWallet(currentEmail); 
                 } catch(err) {
                     alert("Failed to request payout.");
                 }
