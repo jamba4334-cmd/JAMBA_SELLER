@@ -3,6 +3,7 @@ import { initializeApp, getApp, getApps } from "firebase/app";
 import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
+import { API_BASE_URL } from "../apiConfig.js"; 
 import "./Seller.css"; 
 
 const firebaseConfig = {
@@ -23,13 +24,13 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 GLOBAL VARIABLES: Prevents data loss during React re-renders!
+// 🚀 GLOBAL VARIABLES
 let currentEditImageUrls = [];
 let selectedFiles = [];
 let editingProductId = null; 
 let activeUserEmail = ""; 
 let tempProfilePhoto = ""; 
-let globalSellerProducts = []; // 🚀 THE FIX: Store products in memory, not in the HTML buttons!
+let globalSellerProducts = []; 
 
 const stateDistrictMap = {
     "Assam": ["Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar", "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh", "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat", "Kamrup Metropolitan", "Kamrup", "Karbi Anglong", "Karimganj", "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari", "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tinsukia", "Udalguri", "West Karbi Anglong"],
@@ -52,6 +53,9 @@ export default function SellerDashboard() {
     const [sellerProfile, setSellerProfile] = useState({}); 
     const [isProfileEditing, setIsProfileEditing] = useState(true);
 
+    // 🚀 THE FIX: Tab State is now controlled by React to stop the "Blink"
+    const [activeTab, setActiveTab] = useState("orders");
+
     const [selectedState, setSelectedState] = useState("");
     const [selectedDistrict, setSelectedDistrict] = useState("");
     const [selectedPickupState, setSelectedPickupState] = useState("");
@@ -59,13 +63,12 @@ export default function SellerDashboard() {
     const [sameAsPermanent, setSameAsPermanent] = useState(false);
 
     useEffect(() => {
-        function showSection(sectionId, clickedElement) {
-            document.querySelectorAll('.content-section').forEach(section => section.classList.remove('active'));
-            document.getElementById(sectionId).classList.add('active');
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            if(clickedElement) clickedElement.classList.add('active');
-        }
-        window.showSection = showSection;
+        
+        // 🚀 THE FIX: Navigation is now entirely safe and connected to React
+        window.showSection = function(sectionId) {
+            setActiveTab(sectionId);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
 
         function showToast(message) {
             const toast = document.getElementById('toast-notification');
@@ -106,7 +109,7 @@ export default function SellerDashboard() {
             const errorMsg = document.getElementById('login-error');
             
             if (user) {
-                activeUserEmail = user.email; // Save globally
+                activeUserEmail = user.email; 
                 setSellerEmail(user.email);
                 
                 try {
@@ -118,6 +121,11 @@ export default function SellerDashboard() {
                         if (errorMsg) {
                             errorMsg.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Unauthorized: Email not registered. Please contact JAMBAWEAR Admin.`;
                             errorMsg.style.display = 'block';
+                            errorMsg.style.color = '#dc2626';
+                            errorMsg.style.background = '#fee2e2';
+                            errorMsg.style.padding = '10px';
+                            errorMsg.style.borderRadius = '6px';
+                            errorMsg.style.fontSize = '13px';
                         }
                         return; 
                     }
@@ -228,7 +236,7 @@ export default function SellerDashboard() {
 
             if(!sellerProfile.brandName || !sellerProfile.sellerName || !sellerProfile.state || !sellerProfile.pickupState) {
                 alert("Please complete your Store Profile (Brand, Permanent & Pickup Location) before submitting a product!");
-                window.showSection('profile', document.querySelectorAll('.nav-item')[4]);
+                window.showSection('profile');
                 submitBtn.disabled = false;
                 submitBtn.innerText = editingProductId ? "Update & Request Approval" : "Submit for Admin Approval";
                 return;
@@ -304,7 +312,7 @@ export default function SellerDashboard() {
                 selectedFiles = [];
                 window.renderImagePreview();
                 
-                showSection('live-products', document.querySelectorAll('.nav-item')[1]);
+                window.showSection('live-products');
                 loadSellerInventory(activeUserEmail);
             } catch (err) { 
                 alert("Error submitting product: " + err.message); 
@@ -314,9 +322,7 @@ export default function SellerDashboard() {
             }
         };
 
-        // 🚀 THE FIX: Memory-based Edit Function!
         window.editProduct = function(productId) {
-            // Find the product in memory instead of parsing HTML
             const product = globalSellerProducts.find(p => p.id === productId);
             if (!product) {
                 alert("Error: Product data not found.");
@@ -350,10 +356,8 @@ export default function SellerDashboard() {
 
             document.getElementById('submit-btn').innerText = "Update & Request Approval";
             document.getElementById('cancel-edit-btn').style.display = "inline-block";
-            showSection('add-product', document.querySelectorAll('.nav-item')[2]);
             
-            // Scroll to top to see the form
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            window.showSection('add-product');
         };
 
         window.cancelEdit = function() {
@@ -368,7 +372,7 @@ export default function SellerDashboard() {
 
             document.getElementById('submit-btn').innerText = "Submit for Admin Approval";
             document.getElementById('cancel-edit-btn').style.display = "none";
-            showSection('live-products', document.querySelectorAll('.nav-item')[1]);
+            window.showSection('live-products');
         };
 
         async function loadSellerInventory(email) {
@@ -376,7 +380,7 @@ export default function SellerDashboard() {
                 const q = query(collection(db, "products"), where("sellerEmail", "==", email));
                 const querySnapshot = await getDocs(q);
                 
-                globalSellerProducts = []; // 🚀 Save globally!
+                globalSellerProducts = []; 
                 querySnapshot.forEach((doc) => {
                     globalSellerProducts.push({ id: doc.id, ...doc.data() });
                 });
@@ -399,7 +403,7 @@ export default function SellerDashboard() {
 
             productsToRender.forEach((product) => {
                 let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
- 
+
                 let statusBadge = '';
                 if (product.approval_status === 'pending') {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Admin Approval</span>';
@@ -409,7 +413,6 @@ export default function SellerDashboard() {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check-double"></i> Live on Store</span>';
                 }
 
-                // 🚀 Passed ONLY the Safe ID!
                 inventoryList.innerHTML += `
                 <div class="card" style="display: flex; gap: 24px; padding: 24px; border: ${product.approval_status === 'pending' ? '2px solid var(--accent)' : '1px solid #e5e7eb'}">
                     <div style="flex: 1;">
@@ -574,7 +577,7 @@ export default function SellerDashboard() {
                 setIsProfileEditing(true);
             }
         }
- 
+
         window.handleProfilePhotoUpload = async function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -672,7 +675,7 @@ export default function SellerDashboard() {
         window.requestPayout = async function() {
             if(!sellerProfile.accNumber) {
                 alert("Please save your Bank Details in the 'Store Profile' tab before requesting a payout.");
-                window.showSection('profile', document.querySelectorAll('.nav-item')[4]);
+                window.showSection('profile');
                 return;
             }
 
@@ -720,11 +723,11 @@ export default function SellerDashboard() {
                     <span style={{ fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '1px', fontWeight: 'bold', marginTop: '4px', textTransform: 'uppercase' }}>Seller Dashboard</span>
                 </div>
                 <ul className="nav-menu">
-                    <li className="nav-item active" onClick={(event) => window.showSection('orders', event.currentTarget)}><i className="fa-solid fa-truck"></i> My Orders</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('live-products', event.currentTarget)}><i className="fa-solid fa-layer-group"></i> My Catalogue</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('add-product', event.currentTarget)}><i className="fa-solid fa-plus"></i> Submit Product</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('payouts', event.currentTarget)}><i className="fa-solid fa-wallet"></i> Earnings & Payouts</li>
-                    <li className="nav-item" onClick={(event) => window.showSection('profile', event.currentTarget)}><i className="fa-solid fa-user-gear"></i> Store Profile</li>
+                    <li className={`nav-item ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => window.showSection('orders')}><i className="fa-solid fa-truck"></i> My Orders</li>
+                    <li className={`nav-item ${activeTab === 'live-products' ? 'active' : ''}`} onClick={() => window.showSection('live-products')}><i className="fa-solid fa-layer-group"></i> My Catalogue</li>
+                    <li className={`nav-item ${activeTab === 'add-product' ? 'active' : ''}`} onClick={() => window.showSection('add-product')}><i className="fa-solid fa-plus"></i> Submit Product</li>
+                    <li className={`nav-item ${activeTab === 'payouts' ? 'active' : ''}`} onClick={() => window.showSection('payouts')}><i className="fa-solid fa-wallet"></i> Earnings & Payouts</li>
+                    <li className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => window.showSection('profile')}><i className="fa-solid fa-user-gear"></i> Store Profile</li>
                 </ul>
             </nav>
 
@@ -738,7 +741,7 @@ export default function SellerDashboard() {
                 </div>
 
                 {/* MY ORDERS TAB */}
-                <div id="orders" className="content-section active">
+                <div id="orders" className={`content-section ${activeTab === 'orders' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Incoming Orders</span>
                     <div id="seller-orders-list">
                         <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading incoming orders...</p>
@@ -746,7 +749,7 @@ export default function SellerDashboard() {
                 </div>
 
                 {/* MY PRODUCTS TAB */}
-                <div id="live-products" className="content-section">
+                <div id="live-products" className={`content-section ${activeTab === 'live-products' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>My Catalogue</span>
                     <div id="seller-inventory-list">
                         <p style={{ padding: '20px', fontWeight: '500', color: 'var(--text-muted)' }}>Loading your inventory...</p>
@@ -754,7 +757,7 @@ export default function SellerDashboard() {
                 </div>
 
                 {/* SUBMIT/EDIT PRODUCT TAB */}
-                <div id="add-product" className="content-section">
+                <div id="add-product" className={`content-section ${activeTab === 'add-product' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Submit/Edit Product</span>
                     <p className="text-helper" style={{ marginBottom: '20px' }}>Your brand and dispatch information will be automatically attached using your Store Profile.</p>
                     
@@ -825,7 +828,7 @@ export default function SellerDashboard() {
                 </div>
 
                 {/* EARNINGS & PAYOUTS TAB */}
-                <div id="payouts" className="content-section">
+                <div id="payouts" className={`content-section ${activeTab === 'payouts' ? 'active' : ''}`}>
                     <span className="section-title" style={{ marginBottom: '24px' }}>Earnings & Payouts</span>
                     
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '24px', marginBottom: '30px' }}>
@@ -884,7 +887,7 @@ export default function SellerDashboard() {
                 </div>
 
                 {/* STORE PROFILE TAB */}
-                <div id="profile" className="content-section">
+                <div id="profile" className={`content-section ${activeTab === 'profile' ? 'active' : ''}`}>
                     
                     {isProfileEditing ? (
                         /* --- EDIT FORM UI --- */
