@@ -23,12 +23,13 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 🚀 GLOBAL VARIABLES: Moved OUTSIDE the component so React never wipes them!
+// 🚀 GLOBAL VARIABLES: Prevents data loss during React re-renders!
 let currentEditImageUrls = [];
 let selectedFiles = [];
 let editingProductId = null; 
-let activeUserEmail = ""; // Fixes the Edit Profile Save Bug!
-let tempProfilePhoto = ""; // Stores the logo before saving
+let activeUserEmail = ""; 
+let tempProfilePhoto = ""; 
+let globalSellerProducts = []; // 🚀 THE FIX: Store products in memory, not in the HTML buttons!
 
 const stateDistrictMap = {
     "Assam": ["Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar", "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh", "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat", "Kamrup Metropolitan", "Kamrup", "Karbi Anglong", "Karimganj", "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari", "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tinsukia", "Udalguri", "West Karbi Anglong"],
@@ -46,9 +47,9 @@ const stateDistrictMap = {
 
 export default function SellerDashboard() {
     const [sellerEmail, setSellerEmail] = useState("");
-     const [wallet, setWallet] = useState({ available: 0, pending: 0, withdrawn: 0 });
+    const [wallet, setWallet] = useState({ available: 0, pending: 0, withdrawn: 0 });
     const [payoutHistory, setPayoutHistory] = useState([]);
-     const [sellerProfile, setSellerProfile] = useState({}); 
+    const [sellerProfile, setSellerProfile] = useState({}); 
     const [isProfileEditing, setIsProfileEditing] = useState(true);
 
     const [selectedState, setSelectedState] = useState("");
@@ -98,8 +99,8 @@ export default function SellerDashboard() {
             }
         };
 
-         let hasBootstrapped = false;
- 
+        let hasBootstrapped = false;
+
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
@@ -129,7 +130,7 @@ export default function SellerDashboard() {
                         await bootstrapData(activeUserEmail); 
                     }
                 } catch (err) {
-                     console.error("Verification failed", err);
+                    console.error("Verification failed", err);
                 }
             } else {
                 if (overlay) overlay.style.display = 'flex';
@@ -170,7 +171,7 @@ export default function SellerDashboard() {
                 promptContent.style.display = 'none';
                 previewContainer.style.display = 'flex';
 
-                 let html = '';
+                let html = '';
                 currentEditImageUrls.forEach((url, index) => {
                     html += `
                         <div style="position:relative; display:inline-block; margin: 4px;">
@@ -179,7 +180,7 @@ export default function SellerDashboard() {
                         </div>
                     `;
                 });
- 
+
                 selectedFiles.forEach((file, index) => {
                     const objectUrl = URL.createObjectURL(file);
                     html += `
@@ -218,7 +219,7 @@ export default function SellerDashboard() {
             e.target.value = ""; 
             window.renderImagePreview();
         };
- 
+
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -280,7 +281,7 @@ export default function SellerDashboard() {
                     
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
-                     
+                    
                     approval_status: "pending", 
                     isHidden: true,
                     updated_at: new Date().toISOString()
@@ -295,7 +296,7 @@ export default function SellerDashboard() {
                     await addDoc(collection(db, "products"), productData);
                     window.showToast("Product Submitted for Admin Approval!");
                 }
- 
+
                 document.getElementById('new-product-form').reset();
                 document.getElementById('cancel-edit-btn').style.display = "none";
                 editingProductId = null;
@@ -313,8 +314,15 @@ export default function SellerDashboard() {
             }
         };
 
-        window.editProduct = function(encodedProduct) {
-            const product = JSON.parse(decodeURIComponent(encodedProduct));
+        // 🚀 THE FIX: Memory-based Edit Function!
+        window.editProduct = function(productId) {
+            // Find the product in memory instead of parsing HTML
+            const product = globalSellerProducts.find(p => p.id === productId);
+            if (!product) {
+                alert("Error: Product data not found.");
+                return;
+            }
+
             editingProductId = product.id; 
 
             document.getElementById('p-name').value = product.title || "";
@@ -343,6 +351,9 @@ export default function SellerDashboard() {
             document.getElementById('submit-btn').innerText = "Update & Request Approval";
             document.getElementById('cancel-edit-btn').style.display = "inline-block";
             showSection('add-product', document.querySelectorAll('.nav-item')[2]);
+            
+            // Scroll to top to see the form
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
         window.cancelEdit = function() {
@@ -364,11 +375,13 @@ export default function SellerDashboard() {
             try {
                 const q = query(collection(db, "products"), where("sellerEmail", "==", email));
                 const querySnapshot = await getDocs(q);
-                let products = [];
+                
+                globalSellerProducts = []; // 🚀 Save globally!
                 querySnapshot.forEach((doc) => {
-                    products.push({ id: doc.id, ...doc.data() });
+                    globalSellerProducts.push({ id: doc.id, ...doc.data() });
                 });
-                renderInventoryList(products);
+                
+                renderInventoryList(globalSellerProducts);
             } catch (err) {
                 console.error("Inventory Load Error:", err);
             }
@@ -386,8 +399,7 @@ export default function SellerDashboard() {
 
             productsToRender.forEach((product) => {
                 let mainImgUrl = (product.images && product.images.length > 0) ? product.images[0] : "https://via.placeholder.com/150";
-                 const productJson = encodeURIComponent(JSON.stringify(product)).replace(/'/g, "%27");
-
+ 
                 let statusBadge = '';
                 if (product.approval_status === 'pending') {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--accent);"><i class="fa-solid fa-clock"></i> Pending Admin Approval</span>';
@@ -397,6 +409,7 @@ export default function SellerDashboard() {
                     statusBadge = '<span class="hero-badge" style="background-color: var(--success);"><i class="fa-solid fa-check-double"></i> Live on Store</span>';
                 }
 
+                // 🚀 Passed ONLY the Safe ID!
                 inventoryList.innerHTML += `
                 <div class="card" style="display: flex; gap: 24px; padding: 24px; border: ${product.approval_status === 'pending' ? '2px solid var(--accent)' : '1px solid #e5e7eb'}">
                     <div style="flex: 1;">
@@ -406,7 +419,7 @@ export default function SellerDashboard() {
                         </div>
                         <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
                             ${statusBadge}
-                            <button class="action-btn btn-edit" style="padding: 6px 12px; font-size: 12px;" onclick="window.editProduct('${productJson}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
+                            <button class="action-btn btn-edit" style="padding: 6px 12px; font-size: 12px;" onclick="window.editProduct('${product.id}')"><i class="fa-solid fa-pen"></i> Edit Details</button>
                         </div>
                     </div>
                     <img src="${mainImgUrl}" style="width:90px; height:90px; object-fit:cover; border-radius:8px; border: 1px solid #e5e7eb;">
@@ -541,7 +554,7 @@ export default function SellerDashboard() {
                 if (profileSnap.exists()) {
                     const data = profileSnap.data();
                     setSellerProfile(data);
-                    tempProfilePhoto = data.profilePhoto || ""; // Set temp memory
+                    tempProfilePhoto = data.profilePhoto || ""; 
                     
                     setSameAsPermanent(data.sameAsPermanent || false);
                     setSelectedState(data.state || "");
@@ -561,8 +574,7 @@ export default function SellerDashboard() {
                 setIsProfileEditing(true);
             }
         }
-
-        // 🚀 NEW: PROFILE PHOTO UPLOAD LOGIC
+ 
         window.handleProfilePhotoUpload = async function(e) {
             const file = e.target.files[0];
             if (!file) return;
