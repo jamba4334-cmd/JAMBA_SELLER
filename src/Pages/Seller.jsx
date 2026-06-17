@@ -3,7 +3,7 @@ import { initializeApp, getApp, getApps } from "firebase/app";
 import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-import "./Seller.css"; // No apiConfig.js needed here!
+import "./Seller.css"; 
 
 const firebaseConfig = {
     apiKey: "AIzaSyBgH8hpWJ97mqLFfoDDW9A_78pR5YjEmxo", 
@@ -22,6 +22,10 @@ const app = getApps().some((firebaseApp) => firebaseApp.name === appName)
 const db = getFirestore(app);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
+
+// 🚀 THE FIX: Moved to global scope so React re-renders never wipe them!
+let currentEditImageUrls = [];
+let selectedFiles = [];
 
 const stateDistrictMap = {
     "Assam": ["Baksa", "Barpeta", "Biswanath", "Bongaigaon", "Cachar", "Charaideo", "Chirang", "Darrang", "Dhemaji", "Dhubri", "Dibrugarh", "Dima Hasao", "Goalpara", "Golaghat", "Hailakandi", "Hojai", "Jorhat", "Kamrup Metropolitan", "Kamrup", "Karbi Anglong", "Karimganj", "Kokrajhar", "Lakhimpur", "Majuli", "Morigaon", "Nagaon", "Nalbari", "Sivasagar", "Sonitpur", "South Salmara-Mankachar", "Tinsukia", "Udalguri", "West Karbi Anglong"],
@@ -96,7 +100,6 @@ export default function SellerDashboard() {
         let hasBootstrapped = false;
         let currentEmail = "";
 
-        // 🚀 SERVERLESS AUTH CHECK
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
@@ -105,7 +108,6 @@ export default function SellerDashboard() {
                 currentEmail = user.email;
                 
                 try {
-                    // Ask Firebase directly if this email is authorized
                     const docRef = doc(db, "authorized_sellers", currentEmail);
                     const docSnap = await getDoc(docRef);
                     
@@ -123,7 +125,6 @@ export default function SellerDashboard() {
                         return; 
                     }
 
-                    // Let them in
                     setSellerEmail(currentEmail);
                     if (errorMsg) errorMsg.style.display = 'none';
                     if (overlay) overlay.style.display = 'none';
@@ -165,9 +166,6 @@ export default function SellerDashboard() {
             await loadSellerInventory(email); 
             await loadSellerOrders(email); 
         }
-
-        let currentEditImageUrls = [];
-        let selectedFiles = [];        
 
         window.renderImagePreview = function() {
             const previewContainer = document.getElementById('image-preview-container');
@@ -216,7 +214,6 @@ export default function SellerDashboard() {
             window.renderImagePreview();
         };
 
-        // 🚀 SERVERLESS: DIRECT PRODUCT SUBMISSION TO FIREBASE
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -278,18 +275,16 @@ export default function SellerDashboard() {
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
                     
-                    // 🚀 CRITICAL SERVERLESS FLAGS
                     approval_status: "pending", 
                     isHidden: true,
                     created_at: new Date().toISOString()
                 };
 
-                // Serverless write to Firebase
                 await addDoc(collection(db, "products"), productData);
 
                 window.showToast("Product Submitted for Admin Approval!");
                 document.getElementById('new-product-form').reset();
-                selectedFiles = [];
+                selectedFiles = []; // Clear global memory
                 window.renderImagePreview();
                 
                 showSection('live-products', document.querySelectorAll('.nav-item')[1]);
@@ -302,7 +297,6 @@ export default function SellerDashboard() {
             }
         };
 
-        // 🚀 SERVERLESS: DIRECT INVENTORY FETCH FROM FIREBASE
         async function loadSellerInventory(email) {
             try {
                 const q = query(collection(db, "products"), where("sellerEmail", "==", email));
@@ -353,7 +347,6 @@ export default function SellerDashboard() {
             });
         }
 
-        // 🚀 SERVERLESS: DIRECT ORDER FETCH
         async function loadSellerOrders(email) {
             try {
                 const querySnapshot = await getDocs(collection(db, "orders"));
@@ -376,7 +369,6 @@ export default function SellerDashboard() {
             }
         }
 
-        // 🚀 SERVERLESS: DIRECT ORDER ACCEPTANCE
         window.acceptOrder = async function(orderId) {
             if(confirm("By accepting, you confirm you have this item in stock and will prepare it for pickup.")) {
                 try {
@@ -431,7 +423,7 @@ export default function SellerDashboard() {
                     actionAreaHtml = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb;">
                             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                <strong>Courier:</strong> ${order.courierName || 'N/A'} | <strong>Tracking:</strong> ${order.trackingId}
+                                <strong>Courier:</strong> ${order.courierName} | <strong>Tracking:</strong> ${order.trackingId}
                             </div>
                         </div>
                     `;
@@ -474,7 +466,6 @@ export default function SellerDashboard() {
             });
         }
 
-        // 🚀 SERVERLESS: DIRECT PROFILE FETCH
         async function loadSellerProfileAndWallet(email) {
             try {
                 const profileRef = doc(db, "seller_profiles", email);
@@ -493,7 +484,6 @@ export default function SellerDashboard() {
                     setIsProfileEditing(true);
                 }
 
-                // Temporary wallet simulation for serverless frontend
                 setWallet({ available: 0, pending: 0, withdrawn: 0 });
                 setPayoutHistory([]);
 
@@ -503,7 +493,6 @@ export default function SellerDashboard() {
             }
         }
 
-        // 🚀 SERVERLESS: DIRECT PROFILE SAVE
         window.handleProfileSave = async function(e) {
             e.preventDefault();
 
@@ -567,7 +556,6 @@ export default function SellerDashboard() {
             }
         };
 
-        // 🚀 SERVERLESS: PAYOUT REQUEST
         window.requestPayout = async function() {
             if(!sellerProfile.accNumber) {
                 alert("Please save your Bank Details in the 'Store Profile' tab before requesting a payout.");
