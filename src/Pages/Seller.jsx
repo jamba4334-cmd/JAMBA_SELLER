@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { initializeApp, getApp, getApps } from "firebase/app";
-import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-import { API_BASE_URL } from "../apiConfig.js"; 
-import "./Seller.css";
+import "./Seller.css"; // No apiConfig.js needed here!
 
 const firebaseConfig = {
     apiKey: "AIzaSyBgH8hpWJ97mqLFfoDDW9A_78pR5YjEmxo", 
@@ -97,7 +96,7 @@ export default function SellerDashboard() {
         let hasBootstrapped = false;
         let currentEmail = "";
 
-        // 🚀 HYBRID AUTH CHECK (Directly checks authorized_sellers list)
+        // 🚀 SERVERLESS AUTH CHECK
         onAuthStateChanged(auth, async (user) => {
             const overlay = document.getElementById('login-overlay');
             const errorMsg = document.getElementById('login-error');
@@ -106,6 +105,7 @@ export default function SellerDashboard() {
                 currentEmail = user.email;
                 
                 try {
+                    // Ask Firebase directly if this email is authorized
                     const docRef = doc(db, "authorized_sellers", currentEmail);
                     const docSnap = await getDoc(docRef);
                     
@@ -123,6 +123,7 @@ export default function SellerDashboard() {
                         return; 
                     }
 
+                    // Let them in
                     setSellerEmail(currentEmail);
                     if (errorMsg) errorMsg.style.display = 'none';
                     if (overlay) overlay.style.display = 'none';
@@ -215,7 +216,7 @@ export default function SellerDashboard() {
             window.renderImagePreview();
         };
 
-        // 🚀 HYBRID: PRODUCT SUBMISSION VIA BACKEND
+        // 🚀 SERVERLESS: DIRECT PRODUCT SUBMISSION TO FIREBASE
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit-btn');
@@ -247,6 +248,7 @@ export default function SellerDashboard() {
                 if (finalUrls.length === 0) throw new Error("Please upload at least 1 image.");
 
                 const productData = {
+                    item_id: "JW" + Date.now().toString().slice(-6),
                     title: document.getElementById('p-name').value || "",
                     original_price: parseFloat(document.getElementById('p-original-price').value) || 0,
                     selling_price: parseFloat(document.getElementById('p-price').value) || 0,
@@ -276,18 +278,14 @@ export default function SellerDashboard() {
                     allow_cod: document.getElementById('p-pay-cod').checked,
                     allow_online: document.getElementById('p-pay-online').checked,
                     
-                    // 🚀 CRITICAL WORKFLOW FLAGS: Automatically hidden pending approval
+                    // 🚀 CRITICAL SERVERLESS FLAGS
                     approval_status: "pending", 
-                    isHidden: true 
+                    isHidden: true,
+                    created_at: new Date().toISOString()
                 };
 
-                const response = await fetch(`${API_BASE_URL}/seller/products`, {
-                    method: "POST",
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(productData)
-                });
-
-                if (!response.ok) throw new Error("Failed to submit product.");
+                // Serverless write to Firebase
+                await addDoc(collection(db, "products"), productData);
 
                 window.showToast("Product Submitted for Admin Approval!");
                 document.getElementById('new-product-form').reset();
@@ -304,19 +302,21 @@ export default function SellerDashboard() {
             }
         };
 
+        // 🚀 SERVERLESS: DIRECT INVENTORY FETCH FROM FIREBASE
         async function loadSellerInventory(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/products?email=${email}`);
-                if (!response.ok) throw new Error("Failed to load inventory.");
-                
-                const data = await response.json();
-                renderInventoryList(data);
+                const q = query(collection(db, "products"), where("sellerEmail", "==", email));
+                const querySnapshot = await getDocs(q);
+                let products = [];
+                querySnapshot.forEach((doc) => {
+                    products.push({ id: doc.id, ...doc.data() });
+                });
+                renderInventoryList(products);
             } catch (err) {
                 console.error("Inventory Load Error:", err);
             }
         }
 
-        // 🚀 DYNAMIC BADGES BASED ON ADMIN APPROVAL
         function renderInventoryList(productsToRender) {
             const inventoryList = document.getElementById('seller-inventory-list');
             if(!inventoryList) return;
@@ -353,24 +353,36 @@ export default function SellerDashboard() {
             });
         }
 
+        // 🚀 SERVERLESS: DIRECT ORDER FETCH
         async function loadSellerOrders(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/orders?email=${email}`);
-                if (!response.ok) throw new Error("Failed to load orders.");
-                const data = await response.json();
-                renderOrdersList(data);
+                const querySnapshot = await getDocs(collection(db, "orders"));
+                let sellerOrders = [];
+                
+                querySnapshot.forEach(document => {
+                    const orderData = document.data();
+                    if(orderData.items) {
+                        const hasMyItems = orderData.items.some(item => item.sellerEmail === email || item.brandName === sellerProfile.brandName);
+                        if(hasMyItems) {
+                            sellerOrders.push({ id: document.id, ...orderData });
+                        }
+                    }
+                });
+
+                sellerOrders.sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
+                renderOrdersList(sellerOrders);
             } catch (error) {
                 console.error("Error loading orders:", error);
             }
         }
 
+        // 🚀 SERVERLESS: DIRECT ORDER ACCEPTANCE
         window.acceptOrder = async function(orderId) {
             if(confirm("By accepting, you confirm you have this item in stock and will prepare it for pickup.")) {
                 try {
-                    await fetch(`${API_BASE_URL}/seller/orders/${orderId}/accept`, {
-                        method: "PUT",
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ seller_email: currentEmail })
+                    await updateDoc(doc(db, "orders", orderId), { 
+                        seller_accepted: true,
+                        accepted_at: new Date().toISOString()
                     });
                     window.showToast("Order Accepted Successfully!");
                     loadSellerOrders(currentEmail);
@@ -419,7 +431,7 @@ export default function SellerDashboard() {
                     actionAreaHtml = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb;">
                             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                <strong>Courier:</strong> ${order.courierName} | <strong>Tracking:</strong> ${order.trackingId}
+                                <strong>Courier:</strong> ${order.courierName || 'N/A'} | <strong>Tracking:</strong> ${order.trackingId}
                             </div>
                         </div>
                     `;
@@ -440,12 +452,12 @@ export default function SellerDashboard() {
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
                             <div>
                                 <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Order Ref: ${order.id}</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Placed: ${new Date(order.created_at || order.createdAt).toLocaleString()}</div>
                                 <div style="font-size: 11px; font-weight: bold; color: ${isCOD ? '#b45309' : '#1d4ed8'}; margin-top: 6px;">
                                     ${isCOD ? '<i class="fa-solid fa-money-bill"></i> CASH ON DELIVERY' : '<i class="fa-solid fa-credit-card"></i> PREPAID ONLINE'}
                                 </div>
                             </div>
-                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total}</div>
+                            <div style="font-size: 18px; font-weight: bold; color: var(--primary);">₹${order.total || order.totalAmount}</div>
                         </div>
                         
                         <div style="border: 1px solid #e5e7eb; border-top: 3px solid #3b82f6; padding: 16px; border-radius: 6px; background: #fff;">
@@ -462,34 +474,36 @@ export default function SellerDashboard() {
             });
         }
 
+        // 🚀 SERVERLESS: DIRECT PROFILE FETCH
         async function loadSellerProfileAndWallet(email) {
             try {
-                const response = await fetch(`${API_BASE_URL}/seller/profile?email=${email}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    if(data.profile && data.profile.brandName) {
-                        setSellerProfile(data.profile);
-                        setSameAsPermanent(data.profile.sameAsPermanent || false);
-                        setSelectedState(data.profile.state || "");
-                        setSelectedDistrict(data.profile.district || "");
-                        setSelectedPickupState(data.profile.pickupState || "");
-                        setSelectedPickupDistrict(data.profile.pickupDistrict || "");
-                        
-                        setIsProfileEditing(false);
-                    } else {
-                        setIsProfileEditing(true);
-                    }
-
-                    if(data.wallet) setWallet(data.wallet);
-                    if(data.payouts) setPayoutHistory(data.payouts);
+                const profileRef = doc(db, "seller_profiles", email);
+                const profileSnap = await getDoc(profileRef);
+                
+                if (profileSnap.exists()) {
+                    const data = profileSnap.data();
+                    setSellerProfile(data);
+                    setSameAsPermanent(data.sameAsPermanent || false);
+                    setSelectedState(data.state || "");
+                    setSelectedDistrict(data.district || "");
+                    setSelectedPickupState(data.pickupState || "");
+                    setSelectedPickupDistrict(data.pickupDistrict || "");
+                    setIsProfileEditing(false);
+                } else {
+                    setIsProfileEditing(true);
                 }
+
+                // Temporary wallet simulation for serverless frontend
+                setWallet({ available: 0, pending: 0, withdrawn: 0 });
+                setPayoutHistory([]);
+
             } catch (err) {
                 console.log("Could not fetch profile yet, keeping edit mode open.");
                 setIsProfileEditing(true);
             }
         }
 
+        // 🚀 SERVERLESS: DIRECT PROFILE SAVE
         window.handleProfileSave = async function(e) {
             e.preventDefault();
 
@@ -537,14 +551,11 @@ export default function SellerDashboard() {
                 accName: document.getElementById('bank-acc-name').value,
                 accNumber: accNum,
                 ifsc: ifsc,
+                updated_at: new Date().toISOString()
             };
 
             try {
-                await fetch(`${API_BASE_URL}/seller/profile`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(profileData)
-                });
+                await setDoc(doc(db, "seller_profiles", currentEmail), profileData);
                 setSellerProfile(profileData); 
                 setIsProfileEditing(false); 
                 window.showToast("Store Profile Saved!");
@@ -556,6 +567,7 @@ export default function SellerDashboard() {
             }
         };
 
+        // 🚀 SERVERLESS: PAYOUT REQUEST
         window.requestPayout = async function() {
             if(!sellerProfile.accNumber) {
                 alert("Please save your Bank Details in the 'Store Profile' tab before requesting a payout.");
@@ -570,13 +582,13 @@ export default function SellerDashboard() {
 
             if(confirm(`Request withdrawal of ₹${wallet.available}?`)) {
                 try {
-                    await fetch(`${API_BASE_URL}/seller/payouts/request`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email: currentEmail, amount: wallet.available })
+                    await addDoc(collection(db, "payout_requests"), { 
+                        email: currentEmail, 
+                        amount: wallet.available,
+                        status: 'pending',
+                        date: new Date().toISOString()
                     });
                     window.showToast("Payout Request Submitted to Admin!");
-                    loadSellerProfileAndWallet(currentEmail); 
                 } catch(err) {
                     alert("Failed to request payout.");
                 }
